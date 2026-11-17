@@ -3294,6 +3294,7 @@ export default function App() {
   const [ingresoId, VerIngreso] = useState("");
   const [filtroDir, setFiltroDir] = useState("todos");
   const [hospMapa, setHospMapa] = useState({});
+  const [fotosMapa, setFotosMapa] = useState({});
 
   // Estado del Centro de Notificaciones
   const [pautasActivas, setPautasActivas] = useState([]);
@@ -3383,8 +3384,13 @@ export default function App() {
       .expediente(id, ac.signal)
       .then((r) => {
         if (activo) {
-          if (r.p) F(r);
-          else {
+          if (r.p) {
+            F(r);
+            const fid = r.p.foto_id || r.p.fotoId;
+            if (fid) {
+              setFotosMapa((prev) => (prev[r.p.id] === fid ? prev : { ...prev, [r.p.id]: fid }));
+            }
+          } else {
             F(null);
             EF("No se encontró el paciente.");
           }
@@ -3461,9 +3467,10 @@ export default function App() {
 
   const renderBotonPaciente = (p, enHospital) => {
     const jaula = p.jaula || hospMapa[p.id]?.jaula;
+    const fotoId = p.foto_id || p.fotoId || fotosMapa[p.id];
     return (
       <button className="ve-patient" key={p.id} aria-pressed={p.id === id} onClick={() => seleccionar(p.id)}>
-        <AvatarPaciente pequeno paciente={p} src={repo.fotos.url(p.id, p.foto_id)} />
+        <AvatarPaciente pequeno paciente={p} src={repo.fotos.url(p.id, fotoId)} />
         <span className="ve-grow">
           <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
             <strong>{p.nombre}</strong>
@@ -3801,6 +3808,7 @@ export default function App() {
           recargar={recargar}
           guardado={(fotoId) => {
             const pid = modal.d.id;
+            setFotosMapa((prev) => ({ ...prev, [pid]: fotoId }));
             F((prev) => (prev?.p.id === pid ? { ...prev, p: { ...prev.p, foto_id: fotoId } } : prev));
             guardar(pid, "Foto de identificación guardada.");
           }}
