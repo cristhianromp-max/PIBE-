@@ -2,7 +2,8 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   Camera, Search, Plus, Pencil, RefreshCw, ArrowLeft, ChevronRight,
   FolderOpen, Paperclip, Activity, FileText, X, Scissors, Receipt,
-  LogOut, Droplets, CheckCircle2, Trash2, Sparkles, Upload
+  LogOut, Droplets, CheckCircle2, Trash2, Sparkles, Upload,
+  Bell, Clock, AlertTriangle, Syringe
 } from "lucide-react";
 import { crearRepositorio, etiquetas, fechaCorta, fechaLocal, hora, edad, uuid } from "./datos.mjs";
 import { config, marca } from "./config";
@@ -26,6 +27,7 @@ const OPCIONES_JAULAS = [
 ];
 
 const TIPOS_TERAPIA_HOSP = [
+  "Medicación IV / IM / SC / VO",
   "Medicamento tópico",
   "Curación de herida",
   "Baño medicado / terapéutico",
@@ -33,11 +35,308 @@ const TIPOS_TERAPIA_HOSP = [
   "Nebulización"
 ];
 
+// ============================================================================
+// UTILIDADES DE CÁLCULO DE HORARIOS PARA NOTIFICACIONES
+// ============================================================================
+function parsearFechaEcuador(str) {
+  if (!str) return null;
+  const limpia = String(str).trim().replace(" ", "T");
+  const iso = limpia.length === 16 ? `${limpia}:00-05:00` : limpia;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parsearIntervaloMinutos(frecuencia) {
+  const txt = String(frecuencia || "").toLowerCase().trim();
+  const matchHoras = txt.match(/(?:cada|c\/)\s*(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|hora|horas)?\b/);
+  if (matchHoras) {
+    const val = parseFloat(matchHoras[1].replace(",", "."));
+    if (val > 0) return Math.round(val * 60);
+  }
+  const matchMin = txt.match(/(?:cada|c\/)\s*(\d+)\s*(?:m|min|mins|minuto|minutos)\b/);
+  if (matchMin) {
+    const val = parseInt(matchMin[1], 10);
+    if (val > 0) return val;
+  }
+  if (/\bsid\b|1\s*vez|una\s*vez|diario|cada\s*d[ií]a/.test(txt)) return 1440;
+  if (/\bbid\b|2\s*veces/.test(txt)) return 720;
+  if (/\btid\b|3\s*veces/.test(txt)) return 480;
+  if (/\bqid\b|4\s*veces/.test(txt)) return 360;
+  return 720; // Predeterminado 12h si se escribe texto libre
+}
+
+function formatearTiempoRelativo(minutosAbs) {
+  if (minutosAbs < 1) return "ahora mismo";
+  if (minutosAbs < 60) return `${minutosAbs} min`;
+  const h = Math.floor(minutosAbs / 60);
+  const m = minutosAbs % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function calcularEstadoDosis(item, ahoraMs) {
+  const intervaloMin = parsearIntervaloMinutos(item.frecuencia);
+  const apps = item.aplicaciones || [];
+  let proximaDate = null;
+
+  if (apps.length > 0) {
+    const ultima = parsearFechaEcuador(apps[0].fecha);
+    if (ultima) {
+      proximaDate = new Date(ultima.getTime() + intervaloMin * 60000);
+    }
+  } else {
+    proximaDate = parsearFechaEcuador(item.proximaManual || item.fechaInicio);
+  }
+
+  if (!proximaDate) {
+    proximaDate = new Date(ahoraMs);
+  }
+
+  const diffMin = Math.round((proximaDate.getTime() - ahoraMs) / 60000);
+  const urgencia = diffMin < 0 ? "atrasado" : diffMin <= 60 ? "proximo" : "programado";
+
+  return {
+    proximaDate,
+    proximaTexto: fechaLocal(proximaDate).replace("T", " "),
+    diffMin,
+    urgencia,
+    etiquetaTiempo:
+      diffMin < 0
+        ? `Atrasado hace ${formatearTiempoRelativo(Math.abs(diffMin))}`
+        : diffMin === 0
+        ? "Toca ahora"
+        : `En ${formatearTiempoRelativo(diffMin)} (${hora(proximaDate)})`
+  };
+}
+
 function SelectorJaula({ valor }) {
-  const opciones = valor && !OPCIONES_JAULAS.some(([v]) => v === valor)
-    ? [...OPCIONES_JAULAS, [valor, valor]]
-    : OPCIONES_JAULAS;
+  const opciones =
+    valor && !OPCIONES_JAULAS.some(([v]) => v === valor)
+      ? [...OPCIONES_JAULAS, [valor, valor]]
+      : OPCIONES_JAULAS;
   return <Campo etiqueta="Jaula / Área" nombre="jaula" valor={valor || ""} opciones={opciones} />;
+}
+
+// ============================================================================
+// CENTRO DE NOTIFICACIONES DE PRÓXIMOS A MEDICAR
+// ============================================================================
+function ModalCentroNotificaciones({
+  pendientes,
+  pacientesLista,
+  cerrar,
+  onMedicarAhora,
+  onIrAPaciente,
+  onRefrescar,
+  cargando
+}) {
+  const dialog = useRef(null);
+  const [filtro, setFiltro] = useState("urgentes");
+  const [responsable, setResponsable] = useState("MVZ. Cristhian Romero");
+  const [procesandoId, setProcesandoId] = useState("");
+
+  useEffect(() => {
+    const el = dialog.current;
+    if (el && !el.open) el.showModal();
+    return () => {
+      if (el?.open) el.close();
+    };
+  }, []);
+
+  const urgentes = pendientes.filter((p) => p.estado.urgencia === "atrasado" || p.estado.urgencia === "proximo");
+  const visibles = filtro === "urgentes" ? urgentes : pendientes;
+
+  async function manejarMedicar(item) {
+    if (procesandoId) return;
+    setProcesandoId(item.id);
+    try {
+      await onMedicarAhora(item, responsable.trim() || "Médico de turno");
+    } finally {
+      setProcesandoId("");
+    }
+  }
+
+  return (
+    <dialog
+      className="ve-dialog ve-dialog-clinico"
+      ref={dialog}
+      onCancel={(e) => {
+        e.preventDefault();
+        cerrar();
+      }}
+      aria-labelledby="titulo-notif"
+    >
+      <div>
+        <div className="ve-row">
+          <div>
+            <h2 id="titulo-notif" style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
+              <Bell size={19} /> Centro de Notificaciones · Próximos a medicar
+            </h2>
+            <p className="ve-meta">
+              {urgentes.length} urgente(s) · {pendientes.length} pauta(s) activa(s) en hospitalización
+            </p>
+          </div>
+          <div className="ve-actions">
+            <Boton icono={RefreshCw} aria-label="Actualizar" onClick={onRefrescar} disabled={cargando} />
+            <Boton icono={X} aria-label="Cerrar" onClick={cerrar} />
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "0.65rem",
+            marginTop: "0.75rem",
+            padding: "0.65rem",
+            background: "#f8fafc",
+            borderRadius: "10px",
+            border: "1px solid #e2e8f0"
+          }}
+        >
+          <div className="ve-actions" style={{ gap: "0.4rem" }}>
+            <button
+              type="button"
+              onClick={() => setFiltro("urgentes")}
+              className={filtro === "urgentes" ? "ve-button" : "ve-link"}
+              style={{ fontSize: "0.8rem", padding: "0.3rem 0.65rem" }}
+            >
+              Urgentes / Próximos ({urgentes.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltro("todos")}
+              className={filtro === "todos" ? "ve-button" : "ve-link"}
+              style={{ fontSize: "0.8rem", padding: "0.3rem 0.65rem" }}
+            >
+              Todos activos ({pendientes.length})
+            </button>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: "1 1 240px", maxWidth: "340px" }}>
+            <label style={{ fontSize: "0.78rem", fontWeight: 600, whiteSpace: "nowrap" }}>Medica:</label>
+            <input
+              type="text"
+              value={responsable}
+              onChange={(e) => setResponsable(e.target.value)}
+              placeholder="Nombre de quien aplica"
+              style={{
+                width: "100%",
+                padding: "0.35rem 0.55rem",
+                borderRadius: "7px",
+                border: "1px solid #cbd5e1",
+                fontSize: "0.82rem"
+              }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.85rem", maxHeight: "60vh", overflowY: "auto" }}>
+          {cargando ? (
+            <p className="ve-sub">Sincronizando horarios de medicación…</p>
+          ) : visibles.length === 0 ? (
+            <div className="ve-empty" style={{ padding: "1.5rem 1rem" }}>
+              <CheckCircle2 size={26} color="#16a34a" />
+              <strong>
+                {filtro === "urgentes"
+                  ? "No hay pacientes atrasados ni próximos en la siguiente hora"
+                  : "No hay medicaciones o terapias activas programadas"}
+              </strong>
+              <span>
+                {filtro === "urgentes" && pendientes.length > 0
+                  ? `Tienes ${pendientes.length} pauta(s) programada(s) para más tarde.`
+                  : "Programa medicaciones o terapias dentro de la hoja de hospitalización de un paciente."}
+              </span>
+            </div>
+          ) : (
+            visibles.map((item) => {
+              const pacEncontrado = pacientesLista.find((p) => p.id === item.pacienteId);
+              const nombrePac = item.pacienteNombre || pacEncontrado?.nombre || "Paciente hospitalizado";
+              const especiePac = item.especie || pacEncontrado?.especie || "";
+              const jaulaPac = item.jaula || pacEncontrado?.jaula || "Sin jaula";
+              const esAtrasado = item.estado.urgencia === "atrasado";
+              const esProximo = item.estado.urgencia === "proximo";
+
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    border: `1px solid ${esAtrasado ? "#fca5a5" : esProximo ? "#fcd34d" : "#cbd5e1"}`,
+                    borderLeft: `5px solid ${esAtrasado ? "#dc2626" : esProximo ? "#d97706" : "#0284c7"}`,
+                    borderRadius: "10px",
+                    padding: "0.75rem",
+                    background: esAtrasado ? "#fef2f2" : esProximo ? "#fffbeb" : "#fff"
+                  }}
+                >
+                  <div className="ve-row" style={{ alignItems: "flex-start", gap: "0.5rem" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+                        <span
+                          className="ve-badge"
+                          style={{
+                            background: esAtrasado ? "#dc2626" : esProximo ? "#f59e0b" : "#e0f2fe",
+                            color: esAtrasado || esProximo ? "#fff" : "#0369a1",
+                            fontWeight: 700
+                          }}
+                        >
+                          {item.estado.etiquetaTiempo}
+                        </span>
+                        <strong style={{ fontSize: "0.96rem" }}>{nombrePac}</strong>
+                        {especiePac && <span className="ve-meta">({especiePac})</span>}
+                        <span className="ve-badge" style={{ background: "#f1f5f9", color: "#334155" }}>
+                          {jaulaPac}
+                        </span>
+                      </div>
+
+                      <p style={{ margin: "0.35rem 0 0.2rem", fontSize: "0.9rem" }}>
+                        <span className="ve-badge" style={{ marginRight: "0.4rem" }}>
+                          {item.tipo}
+                        </span>
+                        <strong>{item.producto}</strong>
+                        {item.dosis ? ` · Dosis/Vía: ${item.dosis}` : ""}
+                      </p>
+
+                      <p className="ve-meta">
+                        Frecuencia: <strong>{item.frecuencia}</strong> · Duración: {item.duracion} ·{" "}
+                        {(item.aplicaciones || []).length > 0
+                          ? `Última dosis: ${item.aplicaciones[0].fecha} (${item.aplicaciones[0].medico})`
+                          : `Inicio: ${item.fechaInicio}`}
+                      </p>
+                    </div>
+
+                    <div className="ve-actions" style={{ flexShrink: 0 }}>
+                      <Boton
+                        principal
+                        icono={CheckCircle2}
+                        disabled={procesandoId === item.id}
+                        onClick={() => manejarMedicar(item)}
+                      >
+                        {procesandoId === item.id ? "Guardando…" : "Medicar ahora"}
+                      </Boton>
+                      {item.pacienteId && (
+                        <Boton
+                          onClick={() => {
+                            cerrar();
+                            onIrAPaciente(item.pacienteId, item.admisionId);
+                          }}
+                        >
+                          Ver hoja
+                        </Boton>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <footer className="ve-actions ve-last">
+          <Boton onClick={cerrar}>Cerrar</Boton>
+        </footer>
+      </div>
+    </dialog>
+  );
 }
 
 // ============================================================================
@@ -392,9 +691,10 @@ function ModalAltaHospital({ paciente, admision, profesionales, cerrar, onAltaCo
 }
 
 // ============================================================================
-// PANEL DE TERAPIAS COMPLEMENTARIAS EN HOJA DE HOSPITALIZACIÓN (NUBE)
+// PANEL DE MEDICACIÓN Y TERAPIAS CON ALERTAS EN HOJA DE HOSPITALIZACIÓN
 // ============================================================================
-function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
+function PanelTerapiasComplementarias({ paciente, admision, profesionales, revision, onCambioNotificaciones }) {
+  const admisionId = admision.id;
   const [lista, setLista] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -402,8 +702,10 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
 
   const [tipo, setTipo] = useState(TIPOS_TERAPIA_HOSP[0]);
   const [producto, setProducto] = useState("");
-  const [frecuencia, setFrecuencia] = useState("Cada 12h");
+  const [dosis, setDosis] = useState("");
+  const [frecuencia, setFrecuencia] = useState("Cada 8h");
   const [duracion, setDuracion] = useState("5 días");
+  const [primeraDosis, setPrimeraDosis] = useState(() => fechaLocal(new Date()));
   const [medico, setMedico] = useState("MVZ. Cristhian Romero");
 
   const cargar = useCallback(async (signal) => {
@@ -432,10 +734,17 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
     try {
       const nueva = {
         id: uuid(),
+        admisionId,
+        pacienteId: paciente?.id || "",
+        pacienteNombre: paciente?.nombre || "",
+        especie: paciente?.especie || "",
+        jaula: admision?.jaula || "",
         tipo,
         producto: producto.trim(),
+        dosis: dosis.trim(),
         frecuencia: frecuencia.trim(),
         duracion: duracion.trim(),
+        proximaManual: primeraDosis.replace("T", " "),
         medico: medico.trim(),
         fechaInicio: fechaLocal(new Date()).replace("T", " "),
         activa: true,
@@ -444,6 +753,8 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
       const guardada = await repo.modulos.guardar(admisionId, "terapia_hosp", nueva);
       setLista((prev) => [guardada, ...prev]);
       setProducto("");
+      setDosis("");
+      if (onCambioNotificaciones) onCambioNotificaciones();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -456,11 +767,16 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
     const doc = medico.trim() || "Médico de turno";
     const actualizada = {
       ...terapia,
+      pacienteId: terapia.pacienteId || paciente?.id || "",
+      pacienteNombre: terapia.pacienteNombre || paciente?.nombre || "",
+      especie: terapia.especie || paciente?.especie || "",
+      jaula: admision?.jaula || terapia.jaula || "",
       aplicaciones: [{ id: uuid(), fecha: ahora, medico: doc }, ...(terapia.aplicaciones || [])]
     };
     try {
       await repo.modulos.guardar(admisionId, "terapia_hosp", actualizada);
       setLista((prev) => prev.map((t) => (t.id === terapia.id ? actualizada : t)));
+      if (onCambioNotificaciones) onCambioNotificaciones();
     } catch (err) {
       setError(err.message);
     }
@@ -471,6 +787,7 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
     try {
       await repo.modulos.guardar(admisionId, "terapia_hosp", actualizada);
       setLista((prev) => prev.map((t) => (t.id === terapia.id ? actualizada : t)));
+      if (onCambioNotificaciones) onCambioNotificaciones();
     } catch (err) {
       setError(err.message);
     }
@@ -480,23 +797,26 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
     try {
       await repo.modulos.eliminar(terapiaId);
       setLista((prev) => prev.filter((t) => t.id !== terapiaId));
+      if (onCambioNotificaciones) onCambioNotificaciones();
     } catch (err) {
       setError(err.message);
     }
   }
 
+  const ahoraMs = Date.now();
+
   return (
     <section className="ve-panel ve-pad" style={{ marginTop: "1rem" }}>
       <div className="ve-row">
         <h2 style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
-          <Droplets size={18} /> Terapias tópicas, curaciones, baños, ozono y nebulizaciones
+          <Syringe size={18} /> Medicación con alerta, tópicos, curaciones, baños, ozono y nebulizaciones
         </h2>
         <span className="ve-meta">{cargando ? "Sincronizando…" : `${lista.length} registradas`}</span>
       </div>
 
       <form onSubmit={agregarTerapia} className="ve-campos" style={{ marginTop: "0.75rem" }}>
         <div className="ve-field">
-          <label>Procedimiento / Terapia</label>
+          <label>Tipo de medicación / terapia</label>
           <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
             {TIPOS_TERAPIA_HOSP.map((op) => (
               <option key={op} value={op}>
@@ -507,23 +827,43 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
         </div>
 
         <div className="ve-field">
-          <label>Producto / Solución / Zona</label>
+          <label>Fármaco / Producto / Solución *</label>
           <input
             type="text"
             value={producto}
             onChange={(e) => setProducto(e.target.value)}
-            placeholder="Ej. Clorhexidina 2%, Salbutamol 0.5 ml..."
+            placeholder="Ej. Ceftriaxona, Meloxicam, Clorhexidina 2%, Nebulización..."
             required
           />
         </div>
 
         <div className="ve-field">
-          <label>Frecuencia</label>
+          <label>Dosis / Vía (opcional)</label>
+          <input
+            type="text"
+            value={dosis}
+            onChange={(e) => setDosis(e.target.value)}
+            placeholder="Ej. 1.2 ml IV, 10 min, aplicar en herida"
+          />
+        </div>
+
+        <div className="ve-field">
+          <label>Frecuencia (activa la alerta) *</label>
           <input
             type="text"
             value={frecuencia}
             onChange={(e) => setFrecuencia(e.target.value)}
-            placeholder="Ej. Cada 8h, Cada 12h, 1 vez/día"
+            placeholder="Ej. Cada 6h, Cada 8h, Cada 12h, Cada 24h"
+            required
+          />
+        </div>
+
+        <div className="ve-field">
+          <label>Primera / Próxima dosis *</label>
+          <input
+            type="datetime-local"
+            value={primeraDosis}
+            onChange={(e) => setPrimeraDosis(e.target.value)}
             required
           />
         </div>
@@ -556,7 +896,7 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
 
         <div className="ve-field" style={{ justifyContent: "flex-end" }}>
           <button type="submit" className="ve-button" disabled={guardando}>
-            {guardando ? "Guardando…" : "+ Agregar terapia"}
+            {guardando ? "Guardando…" : "+ Agregar pauta con alerta"}
           </button>
         </div>
       </form>
@@ -568,56 +908,82 @@ function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
       )}
 
       {cargando ? (
-        <p className="ve-sub" style={{ marginTop: "0.75rem" }}>Cargando terapias…</p>
+        <p className="ve-sub" style={{ marginTop: "0.75rem" }}>Cargando pautas…</p>
       ) : lista.length > 0 ? (
         <div style={{ display: "grid", gap: "0.65rem", marginTop: "1rem" }}>
-          {lista.map((t) => (
-            <div
-              key={t.id}
-              style={{
-                border: "1px solid var(--borde, #dce3ea)",
-                borderRadius: "10px",
-                padding: "0.75rem",
-                background: t.activa ? "#fff" : "#f8fafc",
-                opacity: t.activa ? 1 : 0.78
-              }}
-            >
-              <div className="ve-row" style={{ alignItems: "flex-start", gap: "0.5rem" }}>
-                <div>
-                  <span className="ve-badge" style={{ marginRight: "0.45rem" }}>
-                    {t.tipo}
-                  </span>
-                  <strong>{t.producto}</strong>
-                  <p className="ve-meta" style={{ marginTop: "0.25rem" }}>
-                    Frecuencia: <strong>{t.frecuencia}</strong> · Duración: <strong>{t.duracion}</strong> · Indicó:{" "}
-                    {t.medico || "Sin registrar"} ({t.fechaInicio})
-                  </p>
+          {lista.map((t) => {
+            const estadoDosis = t.activa ? calcularEstadoDosis(t, ahoraMs) : null;
+            return (
+              <div
+                key={t.id}
+                style={{
+                  border: "1px solid var(--borde, #dce3ea)",
+                  borderRadius: "10px",
+                  padding: "0.75rem",
+                  background: t.activa ? "#fff" : "#f8fafc",
+                  opacity: t.activa ? 1 : 0.78
+                }}
+              >
+                <div className="ve-row" style={{ alignItems: "flex-start", gap: "0.5rem" }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+                      <span className="ve-badge">{t.tipo}</span>
+                      <strong>{t.producto}</strong>
+                      {t.dosis && <span className="ve-meta">({t.dosis})</span>}
+                      {estadoDosis && (
+                        <span
+                          className="ve-badge"
+                          style={{
+                            background:
+                              estadoDosis.urgencia === "atrasado"
+                                ? "#fee2e2"
+                                : estadoDosis.urgencia === "proximo"
+                                ? "#fef3c7"
+                                : "#e0f2fe",
+                            color:
+                              estadoDosis.urgencia === "atrasado"
+                                ? "#991b1b"
+                                : estadoDosis.urgencia === "proximo"
+                                ? "#92400e"
+                                : "#0369a1",
+                            fontWeight: 700
+                          }}
+                        >
+                          Próxima: {estadoDosis.etiquetaTiempo}
+                        </span>
+                      )}
+                    </div>
+                    <p className="ve-meta" style={{ marginTop: "0.25rem" }}>
+                      Frecuencia: <strong>{t.frecuencia}</strong> · Duración: <strong>{t.duracion}</strong> · Indicó:{" "}
+                      {t.medico || "Sin registrar"} ({t.fechaInicio})
+                    </p>
+                  </div>
+                  <div className="ve-actions">
+                    <Boton icono={CheckCircle2} onClick={() => registrarAplicacion(t)}>
+                      Marcar realizada
+                    </Boton>
+                    <Boton onClick={() => alternarEstado(t)}>
+                      {t.activa ? "Finalizar" : "Reactivar"}
+                    </Boton>
+                    <Boton icono={Trash2} aria-label="Eliminar" onClick={() => eliminarTerapia(t.id)} />
+                  </div>
                 </div>
-                <div className="ve-actions">
-                  <Boton icono={CheckCircle2} onClick={() => registrarAplicacion(t)}>
-                    Marcar realizada
-                  </Boton>
-                  <Boton onClick={() => alternarEstado(t)}>
-                    {t.activa ? "Finalizar" : "Reactivar"}
-                  </Boton>
-                  <Boton icono={Trash2} aria-label="Eliminar" onClick={() => eliminarTerapia(t.id)} />
-                </div>
-              </div>
 
-              {(t.aplicaciones || []).length > 0 && (
-                <div style={{ marginTop: "0.5rem", paddingTop: "0.45rem", borderTop: "1px dashed #e2e8f0" }}>
-                  <span className="ve-meta">
-                    Sesiones aplicadas ({t.aplicaciones.length}):{" "}
-                    {t.aplicaciones.map((ap) => `${ap.fecha} (${ap.medico})`).join(" · ")}
-                  </span>
-                </div>
-              )}
-            </div>
-          ))}
+                {(t.aplicaciones || []).length > 0 && (
+                  <div style={{ marginTop: "0.5rem", paddingTop: "0.45rem", borderTop: "1px dashed #e2e8f0" }}>
+                    <span className="ve-meta">
+                      Aplicaciones registradas ({t.aplicaciones.length}):{" "}
+                      {t.aplicaciones.map((ap) => `${ap.fecha} (${ap.medico})`).join(" · ")}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="ve-sub" style={{ marginTop: "0.75rem" }}>
-          Sin terapias tópicas, curaciones, baños, ozono o nebulizaciones registradas en este ingreso.
+          Sin medicaciones o terapias complementarias registradas en este ingreso.
         </p>
       )}
     </section>
@@ -1815,7 +2181,18 @@ function PestanaPeluqueria({ paciente, revision }) {
 // ============================================================================
 // HISTORIA CLÍNICA DEL PACIENTE
 // ============================================================================
-function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recargar, onSyncHosp, onAltaSuccess }) {
+function Historia({
+  ficha,
+  abrir,
+  volver,
+  ingresoId,
+  verIngreso,
+  revision,
+  recargar,
+  onSyncHosp,
+  onAltaSuccess,
+  onCambioNotificaciones
+}) {
   const android = globalThis.Capacitor?.getPlatform?.() === "android";
   const { p, atenciones, anexos } = ficha;
   const [filtro, Filtro] = useState("todos");
@@ -1831,7 +2208,7 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
     if (onSyncHosp && p?.id) {
       onSyncHosp(p.id, hospitalAbierto ? { activa: true, jaula: hospitalAbierto.jaula || "" } : { activa: false });
     }
-  }, [p?.id, hospitalAbierto?.id, hospitalAbierto?.abierta, hospitalAbierto?.jaula]);
+  }, [p?.id, hospitalAbierto?.id, hospitalAbierto?.abierta, hospitalAbierto?.jaula, onSyncHosp]);
 
   function formulario(d) {
     abrir({ clase: "atencion", d, pid: p.id, profesionales });
@@ -1882,7 +2259,13 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
           revision={revision}
         />
 
-        <PanelTerapiasComplementarias admisionId={admision.id} profesionales={profesionales} revision={revision} />
+        <PanelTerapiasComplementarias
+          paciente={p}
+          admision={admision}
+          profesionales={profesionales}
+          revision={revision}
+          onCambioNotificaciones={onCambioNotificaciones}
+        />
 
         {altaTarget && (
           <ModalAltaHospital
@@ -2170,6 +2553,12 @@ export default function App() {
   const [filtroDir, setFiltroDir] = useState("todos");
   const [hospMapa, setHospMapa] = useState({});
 
+  // Estado del Centro de Notificaciones
+  const [pautasActivas, setPautasActivas] = useState([]);
+  const [cargaNotif, setCargaNotif] = useState(false);
+  const [abrirNotif, setAbrirNotif] = useState(false);
+  const [relojTick, setRelojTick] = useState(() => Date.now());
+
   function recargar() {
     Rev((n) => n + 1);
   }
@@ -2183,6 +2572,35 @@ export default function App() {
       return { ...prev, [pacienteId]: info };
     });
   }, []);
+
+  // Cargar notificaciones globales de pacientes próximos a medicar
+  const cargarNotificaciones = useCallback(async (signal) => {
+    setCargaNotif(true);
+    try {
+      const items = await repo.notificaciones.listarActivas(signal);
+      setPautasActivas(items);
+    } catch (e) {
+      if (e.name !== "AbortError") console.error(e);
+    } finally {
+      setCargaNotif(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    cargarNotificaciones(ac.signal);
+    return () => ac.abort();
+  }, [cargarNotificaciones, rev]);
+
+  // Actualizar reloj cada 30 segundos y recargar nube cada 2 minutos
+  useEffect(() => {
+    const tReloj = setInterval(() => setRelojTick(Date.now()), 30000);
+    const tSync = setInterval(() => cargarNotificaciones(), 120000);
+    return () => {
+      clearInterval(tReloj);
+      clearInterval(tSync);
+    };
+  }, [cargarNotificaciones]);
 
   useEffect(() => {
     const fn = () => recargar();
@@ -2250,6 +2668,9 @@ export default function App() {
       if (dialogo) {
         e.preventDefault();
         dialogo.dispatchEvent(new Event("cancel", { cancelable: true, bubbles: false }));
+      } else if (abrirNotif) {
+        e.preventDefault();
+        setAbrirNotif(false);
       } else if (ingresoId) {
         e.preventDefault();
         VerIngreso("");
@@ -2260,7 +2681,7 @@ export default function App() {
     }
     window.addEventListener("elpibe:volver", volverEnAndroid);
     return () => window.removeEventListener("elpibe:volver", volverEnAndroid);
-  }, [id, ingresoId]);
+  }, [id, ingresoId, abrirNotif]);
 
   function seleccionar(v) {
     VerIngreso("");
@@ -2283,6 +2704,31 @@ export default function App() {
     A(msg);
     recargar();
   }
+
+  async function medicarDesdeNotificacion(item, nombreMedico) {
+    const ahora = fechaLocal(new Date()).replace("T", " ");
+    const actualizada = {
+      ...item,
+      aplicaciones: [{ id: uuid(), fecha: ahora, medico: nombreMedico }, ...(item.aplicaciones || [])]
+    };
+    await repo.modulos.guardar(item.admisionId, item.modulo || "terapia_hosp", actualizada);
+    setPautasActivas((prev) => prev.map((p) => (p.id === item.id ? actualizada : p)));
+    A(`Medicación aplicada a ${item.pacienteNombre || "paciente"} (${item.producto}) por ${nombreMedico}.`);
+    recargar();
+  }
+
+  // Calcular y ordenar pendientes de medicación por urgencia
+  const pendientesOrdenados = pautasActivas
+    .map((item) => ({
+      ...item,
+      estado: calcularEstadoDosis(item, relojTick)
+    }))
+    .sort((a, b) => a.estado.diffMin - b.estado.diffMin);
+
+  const urgentesCount = pendientesOrdenados.filter(
+    (p) => p.estado.urgencia === "atrasado" || p.estado.urgencia === "proximo"
+  ).length;
+  const atrasadosCount = pendientesOrdenados.filter((p) => p.estado.urgencia === "atrasado").length;
 
   const esHospitalizado = (p) => Boolean(p.hospitalizado || p.abierta || p.ingreso_activo || hospMapa[p.id]?.activa);
   const pacientesHosp = resultado.items.filter((p) => esHospitalizado(p));
@@ -2328,11 +2774,86 @@ export default function App() {
             <img src={marca} alt="Clínica Veterinaria El Pibe" />
             <b>Área clínica</b>
           </div>
-          <span className="ve-badge">{repo.demo ? "Demostración" : "Clínica El Pibe"}</span>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "0.55rem" }}>
+            <button
+              type="button"
+              onClick={() => setAbrirNotif(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.4rem",
+                padding: "0.35rem 0.7rem",
+                borderRadius: "999px",
+                border: `1px solid ${atrasadosCount > 0 ? "#fca5a5" : urgentesCount > 0 ? "#fcd34d" : "#cbd5e1"}`,
+                background: atrasadosCount > 0 ? "#fee2e2" : urgentesCount > 0 ? "#fef3c7" : "#f8fafc",
+                color: atrasadosCount > 0 ? "#991b1b" : urgentesCount > 0 ? "#92400e" : "#1e293b",
+                fontWeight: 700,
+                fontSize: "0.8rem",
+                cursor: "pointer"
+              }}
+              aria-label="Centro de notificaciones de medicación"
+            >
+              <Bell size={15} />
+              <span>Por medicar</span>
+              <span
+                style={{
+                  background: atrasadosCount > 0 ? "#dc2626" : urgentesCount > 0 ? "#d97706" : "#64748b",
+                  color: "#fff",
+                  borderRadius: "999px",
+                  padding: "0.05rem 0.45rem",
+                  fontSize: "0.73rem"
+                }}
+              >
+                {urgentesCount > 0 ? urgentesCount : pendientesOrdenados.length}
+              </span>
+            </button>
+
+            <span className="ve-badge">{repo.demo ? "Demostración" : "Clínica El Pibe"}</span>
+          </div>
         </div>
       </header>
 
       <main className="ve-container">
+        {/* Franja de alerta inmediata si hay pacientes atrasados o próximos en menos de 1h */}
+        {urgentesCount > 0 && (
+          <div
+            role="status"
+            style={{
+              marginBottom: "0.85rem",
+              padding: "0.65rem 0.9rem",
+              borderRadius: "10px",
+              border: `1px solid ${atrasadosCount > 0 ? "#fca5a5" : "#fcd34d"}`,
+              background: atrasadosCount > 0 ? "#fef2f2" : "#fffbeb",
+              color: atrasadosCount > 0 ? "#991b1b" : "#92400e",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.6rem"
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.86rem" }}>
+              {atrasadosCount > 0 ? <AlertTriangle size={18} /> : <Clock size={18} />}
+              <span>
+                <strong>
+                  {atrasadosCount > 0
+                    ? `${atrasadosCount} medicación(es) atrasada(s)`
+                    : `${urgentesCount} paciente(s) próximo(s) a medicar`}
+                </strong>
+                {" — "}
+                {pendientesOrdenados
+                  .slice(0, 2)
+                  .map((p) => `${p.pacienteNombre || "Paciente"} (${p.producto} · ${p.estado.etiquetaTiempo})`)
+                  .join(" | ")}
+              </span>
+            </div>
+            <Boton principal onClick={() => setAbrirNotif(true)}>
+              Abrir notificaciones ({urgentesCount})
+            </Boton>
+          </div>
+        )}
+
         <div className="ve-row">
           <div>
             <h1 className="ve-heading">Expedientes clínicos</h1>
@@ -2487,6 +3008,7 @@ export default function App() {
               recargar={recargar}
               volver={() => seleccionar("")}
               onSyncHosp={actualizarHospPaciente}
+              onCambioNotificaciones={() => cargarNotificaciones()}
               onAltaSuccess={(pid, msg) => {
                 actualizarHospPaciente(pid, { activa: false });
                 A(msg);
@@ -2510,6 +3032,21 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {abrirNotif && (
+        <ModalCentroNotificaciones
+          pendientes={pendientesOrdenados}
+          pacientesLista={resultado.items}
+          cerrar={() => setAbrirNotif(false)}
+          onMedicarAhora={medicarDesdeNotificacion}
+          onRefrescar={() => cargarNotificaciones()}
+          cargando={cargaNotif}
+          onIrAPaciente={(pacId, admId) => {
+            seleccionar(pacId);
+            if (admId) VerIngreso(admId);
+          }}
+        />
+      )}
 
       {modal?.clase === "foto" ? (
         <EditorFoto
