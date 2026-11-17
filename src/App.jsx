@@ -2675,14 +2675,6 @@ function Historia({
           revision={revision}
         />
 
-        <PanelTerapiasComplementarias
-          paciente={p}
-          admision={admision}
-          profesionales={profesionales}
-          revision={revision}
-          onCambioNotificaciones={onCambioNotificaciones}
-        />
-
         {altaTarget && (
           <ModalAltaHospital
             paciente={p}
