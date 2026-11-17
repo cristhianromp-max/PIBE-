@@ -198,7 +198,7 @@ function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onElimina
         );
       }
 
-      onEliminado(paciente.nombre);
+      onEliminado(paciente.id, paciente.nombre);
     } catch (err) {
       setError(err.message || "No se pudo eliminar el paciente.");
       setEliminando(false);
@@ -1523,7 +1523,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                           return (
                             <div key={ex.id} className="ve-row" style={{ fontSize: "0.84rem" }}>
                               <span>
-                                - {ex.nombre} <span className="ve-meta">({ex.fecha})</span>
+                                • {ex.nombre} <span className="ve-meta">({ex.fecha})</span>
                               </span>
                               {realAnexo && (
                                 <div className="ve-actions">
@@ -2885,9 +2885,25 @@ function Historia({
 
   useEffect(() => {
     if (onSyncHosp && p?.id) {
-      onSyncHosp(p.id, hospitalAbierto ? { activa: true, jaula: hospitalAbierto.jaula || "" } : { activa: false });
+      onSyncHosp(
+        p.id,
+        hospitalAbierto
+          ? {
+              activa: true,
+              jaula: hospitalAbierto.jaula || "",
+              ubicacion: hospitalAbierto.detalle_clinico?.ubicacion || ""
+            }
+          : { activa: false }
+      );
     }
-  }, [p?.id, hospitalAbierto?.id, hospitalAbierto?.abierta, hospitalAbierto?.jaula, onSyncHosp]);
+  }, [
+    p?.id,
+    hospitalAbierto?.id,
+    hospitalAbierto?.abierta,
+    hospitalAbierto?.jaula,
+    hospitalAbierto?.detalle_clinico?.ubicacion,
+    onSyncHosp
+  ]);
 
   function formulario(d) {
     abrir({ clase: "atencion", d, pid: p.id, profesionales });
@@ -2932,6 +2948,30 @@ function Historia({
           repo={repo.hospital}
           fotos={repo.fotos}
           editarFoto={editarFoto}
+          onGuardarUbicacion={async (nuevaUbicacion) => {
+            await repo.guardarAtencion({
+              id: admision.id,
+              paciente_id: p.id,
+              tipo: "hospitalizacion",
+              fecha_local: fechaLocal(admision.inicio || new Date()),
+              titulo: admision.titulo,
+              profesional: admision.profesional || "",
+              peso: admision.peso ?? "",
+              jaula: admision.jaula || "",
+              detalle_clinico: { ...(admision.detalle_clinico || {}), ubicacion: nuevaUbicacion },
+              resumen: admision.resumen || "",
+              version: admision.version || 0,
+              abierta: admision.abierta ?? true
+            });
+            if (onSyncHosp) {
+              onSyncHosp(p.id, {
+                activa: Boolean(admision.abierta),
+                jaula: admision.jaula || "",
+                ubicacion: nuevaUbicacion
+              });
+            }
+            recargar();
+          }}
           actualizarFicha={() => {
             recargar();
             if (onCambioNotificaciones) onCambioNotificaciones();
@@ -3268,9 +3308,9 @@ function Historia({
           atenciones={atenciones}
           anexos={anexos}
           cerrar={() => setMostrarModalEliminar(false)}
-          onEliminado={(nombreEliminado) => {
+          onEliminado={(pid, nombreEliminado) => {
             setMostrarModalEliminar(false);
-            if (onPacienteEliminado) onPacienteEliminado(nombreEliminado);
+            if (onPacienteEliminado) onPacienteEliminado(pid, nombreEliminado);
           }}
         />
       )}
@@ -3309,7 +3349,11 @@ export default function App() {
   const actualizarHospPaciente = useCallback((pacienteId, info) => {
     setHospMapa((prev) => {
       const actual = prev[pacienteId];
-      if (actual?.activa === info.activa && (actual?.jaula || "") === (info.jaula || "")) {
+      if (
+        actual?.activa === info.activa &&
+        (actual?.jaula || "") === (info.jaula || "") &&
+        (actual?.ubicacion || "") === (info.ubicacion || "")
+      ) {
         return prev;
       }
       return { ...prev, [pacienteId]: info };
@@ -3440,7 +3484,7 @@ export default function App() {
   function guardar(pid, msg, ingreso) {
     if (ingreso) {
       VerIngreso(ingreso);
-      actualizarHospPaciente(pid, { activa: true, jaula: "" });
+      actualizarHospPaciente(pid, { activa: true, jaula: "", ubicacion: "" });
     }
     M(null);
     Q("");
@@ -3467,6 +3511,7 @@ export default function App() {
 
   const renderBotonPaciente = (p, enHospital) => {
     const jaula = p.jaula || hospMapa[p.id]?.jaula;
+    const ubicacion = p.ubicacion || hospMapa[p.id]?.ubicacion;
     const fotoId = p.foto_id || p.fotoId || fotosMapa[p.id];
     return (
       <button className="ve-patient" key={p.id} aria-pressed={p.id === id} onClick={() => seleccionar(p.id)}>
@@ -3486,6 +3531,20 @@ export default function App() {
                 }}
               >
                 Hospitalizado{jaula ? ` · ${jaula}` : ""}
+              </span>
+            )}
+            {enHospital && ubicacion && (
+              <span
+                className="ve-badge"
+                style={{
+                  background: "#e0f2fe",
+                  color: "#0369a1",
+                  fontSize: "0.68rem",
+                  padding: "0.1rem 0.4rem",
+                  fontWeight: 700
+                }}
+              >
+                {ubicacion}
               </span>
             )}
           </span>
@@ -3761,8 +3820,26 @@ export default function App() {
                 A(msg);
                 recargar();
               }}
-              onPacienteEliminado={(nombreEliminado) => {
-                seleccionar("");
+              onPacienteEliminado={(pid, nombreEliminado) => {
+                VerIngreso("");
+                F(null);
+                EF("");
+                Id("");
+                R((prev) => ({
+                  ...prev,
+                  items: prev.items.filter((item) => item.id !== pid)
+                }));
+                setHospMapa((prev) => {
+                  const copia = { ...prev };
+                  delete copia[pid];
+                  return copia;
+                });
+                setFotosMapa((prev) => {
+                  const copia = { ...prev };
+                  delete copia[pid];
+                  return copia;
+                });
+                setPautasActivas((prev) => prev.filter((item) => item.pacienteId !== pid));
                 A(`Paciente "${nombreEliminado}" y todos sus exámenes fueron eliminados definitivamente.`);
                 recargar();
               }}
