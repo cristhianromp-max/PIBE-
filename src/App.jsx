@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   Camera, Search, Plus, Pencil, RefreshCw, ArrowLeft, ChevronRight,
   FolderOpen, Paperclip, Activity, FileText, X, Scissors, Receipt,
@@ -32,23 +32,6 @@ const TIPOS_TERAPIA_HOSP = [
   "Ozonoterapia",
   "Nebulización"
 ];
-
-function leerStore(clave, fallback) {
-  try {
-    const raw = localStorage.getItem(clave);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function guardarStore(clave, valor) {
-  try {
-    localStorage.setItem(clave, JSON.stringify(valor));
-  } catch (e) {
-    console.error("Error guardando en almacenamiento local:", e);
-  }
-}
 
 function SelectorJaula({ valor }) {
   const opciones = valor && !OPCIONES_JAULAS.some(([v]) => v === valor)
@@ -409,11 +392,13 @@ function ModalAltaHospital({ paciente, admision, profesionales, cerrar, onAltaCo
 }
 
 // ============================================================================
-// PANEL DE TERAPIAS COMPLEMENTARIAS EN HOJA DE HOSPITALIZACIÓN
+// PANEL DE TERAPIAS COMPLEMENTARIAS EN HOJA DE HOSPITALIZACIÓN (NUBE)
 // ============================================================================
-function PanelTerapiasComplementarias({ admisionId, profesionales }) {
-  const [terapias, setTerapias] = useState(() => leerStore("elpibe_terapias_hosp", {}));
-  const lista = terapias[admisionId] || [];
+function PanelTerapiasComplementarias({ admisionId, profesionales, revision }) {
+  const [lista, setLista] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
 
   const [tipo, setTipo] = useState(TIPOS_TERAPIA_HOSP[0]);
   const [producto, setProducto] = useState("");
@@ -421,47 +406,83 @@ function PanelTerapiasComplementarias({ admisionId, profesionales }) {
   const [duracion, setDuracion] = useState("5 días");
   const [medico, setMedico] = useState("MVZ. Cristhian Romero");
 
-  function persistir(nuevaLista) {
-    const actualizado = { ...terapias, [admisionId]: nuevaLista };
-    setTerapias(actualizado);
-    guardarStore("elpibe_terapias_hosp", actualizado);
-  }
+  const cargar = useCallback(async (signal) => {
+    setCargando(true);
+    try {
+      const items = await repo.modulos.listar(admisionId, "terapia_hosp", signal);
+      setLista(items);
+    } catch (e) {
+      if (e.name !== "AbortError") setError(e.message);
+    } finally {
+      setCargando(false);
+    }
+  }, [admisionId]);
 
-  function agregarTerapia(e) {
+  useEffect(() => {
+    const ac = new AbortController();
+    cargar(ac.signal);
+    return () => ac.abort();
+  }, [cargar, revision]);
+
+  async function agregarTerapia(e) {
     e.preventDefault();
-    if (!producto.trim()) return;
-    const nueva = {
-      id: uuid(),
-      tipo,
-      producto: producto.trim(),
-      frecuencia: frecuencia.trim(),
-      duracion: duracion.trim(),
-      medico: medico.trim(),
-      fechaInicio: fechaLocal(new Date()).replace("T", " "),
-      activa: true,
-      aplicaciones: []
-    };
-    persistir([nueva, ...lista]);
-    setProducto("");
+    if (!producto.trim() || guardando) return;
+    setGuardando(true);
+    setError("");
+    try {
+      const nueva = {
+        id: uuid(),
+        tipo,
+        producto: producto.trim(),
+        frecuencia: frecuencia.trim(),
+        duracion: duracion.trim(),
+        medico: medico.trim(),
+        fechaInicio: fechaLocal(new Date()).replace("T", " "),
+        activa: true,
+        aplicaciones: []
+      };
+      const guardada = await repo.modulos.guardar(admisionId, "terapia_hosp", nueva);
+      setLista((prev) => [guardada, ...prev]);
+      setProducto("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGuardando(false);
+    }
   }
 
-  function registrarAplicacion(terapiaId) {
+  async function registrarAplicacion(terapia) {
     const ahora = fechaLocal(new Date()).replace("T", " ");
     const doc = medico.trim() || "Médico de turno";
-    const nuevaLista = lista.map((t) =>
-      t.id === terapiaId
-        ? { ...t, aplicaciones: [{ id: uuid(), fecha: ahora, medico: doc }, ...(t.aplicaciones || [])] }
-        : t
-    );
-    persistir(nuevaLista);
+    const actualizada = {
+      ...terapia,
+      aplicaciones: [{ id: uuid(), fecha: ahora, medico: doc }, ...(terapia.aplicaciones || [])]
+    };
+    try {
+      await repo.modulos.guardar(admisionId, "terapia_hosp", actualizada);
+      setLista((prev) => prev.map((t) => (t.id === terapia.id ? actualizada : t)));
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
-  function alternarEstado(terapiaId) {
-    persistir(lista.map((t) => (t.id === terapiaId ? { ...t, activa: !t.activa } : t)));
+  async function alternarEstado(terapia) {
+    const actualizada = { ...terapia, activa: !terapia.activa };
+    try {
+      await repo.modulos.guardar(admisionId, "terapia_hosp", actualizada);
+      setLista((prev) => prev.map((t) => (t.id === terapia.id ? actualizada : t)));
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
-  function eliminarTerapia(terapiaId) {
-    persistir(lista.filter((t) => t.id !== terapiaId));
+  async function eliminarTerapia(terapiaId) {
+    try {
+      await repo.modulos.eliminar(terapiaId);
+      setLista((prev) => prev.filter((t) => t.id !== terapiaId));
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   return (
@@ -470,7 +491,7 @@ function PanelTerapiasComplementarias({ admisionId, profesionales }) {
         <h2 style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
           <Droplets size={18} /> Terapias tópicas, curaciones, baños, ozono y nebulizaciones
         </h2>
-        <span className="ve-meta">{lista.length} registradas</span>
+        <span className="ve-meta">{cargando ? "Sincronizando…" : `${lista.length} registradas`}</span>
       </div>
 
       <form onSubmit={agregarTerapia} className="ve-campos" style={{ marginTop: "0.75rem" }}>
@@ -534,13 +555,21 @@ function PanelTerapiasComplementarias({ admisionId, profesionales }) {
         </div>
 
         <div className="ve-field" style={{ justifyContent: "flex-end" }}>
-          <button type="submit" className="ve-button">
-            + Agregar terapia
+          <button type="submit" className="ve-button" disabled={guardando}>
+            {guardando ? "Guardando…" : "+ Agregar terapia"}
           </button>
         </div>
       </form>
 
-      {lista.length > 0 ? (
+      {error && (
+        <p className="ve-message" role="alert">
+          {error}
+        </p>
+      )}
+
+      {cargando ? (
+        <p className="ve-sub" style={{ marginTop: "0.75rem" }}>Cargando terapias…</p>
+      ) : lista.length > 0 ? (
         <div style={{ display: "grid", gap: "0.65rem", marginTop: "1rem" }}>
           {lista.map((t) => (
             <div
@@ -565,10 +594,10 @@ function PanelTerapiasComplementarias({ admisionId, profesionales }) {
                   </p>
                 </div>
                 <div className="ve-actions">
-                  <Boton icono={CheckCircle2} onClick={() => registrarAplicacion(t.id)}>
+                  <Boton icono={CheckCircle2} onClick={() => registrarAplicacion(t)}>
                     Marcar realizada
                   </Boton>
-                  <Boton onClick={() => alternarEstado(t.id)}>
+                  <Boton onClick={() => alternarEstado(t)}>
                     {t.activa ? "Finalizar" : "Reactivar"}
                   </Boton>
                   <Boton icono={Trash2} aria-label="Eliminar" onClick={() => eliminarTerapia(t.id)} />
@@ -596,8 +625,7 @@ function PanelTerapiasComplementarias({ admisionId, profesionales }) {
 }
 
 // ============================================================================
-// PESTAÑA DE CIRUGÍAS DEL PACIENTE
-// (Programación, Exámenes prequirúrgicos, Lista previa de materiales/hilos + Internista + "Guardar y subir")
+// PESTAÑA DE CIRUGÍAS DEL PACIENTE (SINCRONIZADA EN SUPABASE)
 // ============================================================================
 function crearFilasBorradorMateriales() {
   return [
@@ -607,9 +635,9 @@ function crearFilasBorradorMateriales() {
   ];
 }
 
-function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecargar }) {
-  const [cirugiasStore, setCirugiasStore] = useState(() => leerStore("elpibe_cirugias", {}));
-  const lista = cirugiasStore[paciente.id] || [];
+function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecargar, revision }) {
+  const [lista, setLista] = useState([]);
+  const [cargando, setCargando] = useState(true);
 
   const [fechaProg, setFechaProg] = useState(fechaLocal(new Date()));
   const [estado, setEstado] = useState("Programada");
@@ -621,20 +649,33 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState("");
 
-  // Borrador en lista de materiales e hilos + internista por cada cirugía
   const [borradoresMat, setBorradoresMat] = useState({});
   const [internistasMat, setInternistasMat] = useState({});
+  const [guardandoMatId, setGuardandoMatId] = useState("");
   const [errorMat, setErrorMat] = useState({});
   const [avisoMat, setAvisoMat] = useState({});
   const [subiendoExtraId, setSubiendoExtraId] = useState("");
+  const [obsEditadas, setObsEditadas] = useState({});
 
   const android = globalThis.Capacitor?.getPlatform?.() === "android";
 
-  function persistir(nuevaLista) {
-    const actualizado = { ...cirugiasStore, [paciente.id]: nuevaLista };
-    setCirugiasStore(actualizado);
-    guardarStore("elpibe_cirugias", actualizado);
-  }
+  const cargarCirugias = useCallback(async (signal) => {
+    setCargando(true);
+    try {
+      const items = await repo.modulos.listar(paciente.id, "cirugia", signal);
+      setLista(items);
+    } catch (e) {
+      if (e.name !== "AbortError") setError(e.message);
+    } finally {
+      setCargando(false);
+    }
+  }, [paciente.id]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    cargarCirugias(ac.signal);
+    return () => ac.abort();
+  }, [cargarCirugias, revision]);
 
   function obtenerBorrador(cirugiaId) {
     return borradoresMat[cirugiaId] || crearFilasBorradorMateriales();
@@ -669,8 +710,11 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
     });
   }
 
-  function guardarYSubirMateriales(cirugiaId, e) {
+  async function guardarYSubirMateriales(cirugia, e) {
     e.preventDefault();
+    const cirugiaId = cirugia.id;
+    if (guardandoMatId === cirugiaId) return;
+
     const internista = (internistasMat[cirugiaId] || "").trim();
     if (!internista) {
       setErrorMat({
@@ -690,32 +734,38 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
       return;
     }
 
-    const fechaReg = fechaLocal(new Date()).replace("T", " ");
-    const nuevosItems = validos.map((f) => ({
-      id: uuid(),
-      nombre: f.nombre.trim(),
-      cantidad: f.cantidad.trim(),
-      internista,
-      fechaRegistro: fechaReg
-    }));
-
-    persistir(
-      lista.map((c) =>
-        c.id === cirugiaId
-          ? { ...c, materiales: [...(c.materiales || []), ...nuevosItems] }
-          : c
-      )
-    );
-
-    setBorradoresMat({ ...borradoresMat, [cirugiaId]: crearFilasBorradorMateriales() });
+    setGuardandoMatId(cirugiaId);
     setErrorMat({ ...errorMat, [cirugiaId]: "" });
-    setAvisoMat({
-      ...avisoMat,
-      [cirugiaId]: `Se registraron ${nuevosItems.length} material(es)/hilo(s) por ${internista}.`
-    });
-    setTimeout(() => {
-      setAvisoMat((prev) => ({ ...prev, [cirugiaId]: "" }));
-    }, 4000);
+    try {
+      const fechaReg = fechaLocal(new Date()).replace("T", " ");
+      const nuevosItems = validos.map((f) => ({
+        id: uuid(),
+        nombre: f.nombre.trim(),
+        cantidad: f.cantidad.trim(),
+        internista,
+        fechaRegistro: fechaReg
+      }));
+
+      const cirActualizada = {
+        ...cirugia,
+        materiales: [...(cirugia.materiales || []), ...nuevosItems]
+      };
+
+      await repo.modulos.guardar(paciente.id, "cirugia", cirActualizada);
+      setLista((prev) => prev.map((c) => (c.id === cirugiaId ? cirActualizada : c)));
+      setBorradoresMat({ ...borradoresMat, [cirugiaId]: crearFilasBorradorMateriales() });
+      setAvisoMat({
+        ...avisoMat,
+        [cirugiaId]: `Se guardaron y subieron ${nuevosItems.length} material(es)/hilo(s) por ${internista}.`
+      });
+      setTimeout(() => {
+        setAvisoMat((prev) => ({ ...prev, [cirugiaId]: "" }));
+      }, 4000);
+    } catch (err) {
+      setErrorMat({ ...errorMat, [cirugiaId]: err.message || "No se pudo subir el registro." });
+    } finally {
+      setGuardandoMatId("");
+    }
   }
 
   async function subirExamenPrequirurgico(file) {
@@ -765,7 +815,8 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
         materiales: []
       };
 
-      persistir([nueva, ...lista]);
+      const guardada = await repo.modulos.guardar(paciente.id, "cirugia", nueva);
+      setLista((prev) => [guardada, ...prev]);
       setMotivo("");
       setProcedimiento("");
       setObservaciones("");
@@ -779,17 +830,18 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
     }
   }
 
-  async function adjuntarMasPreq(cirugiaId, file) {
+  async function adjuntarMasPreq(cirugia, file) {
     if (!file) return;
-    setSubiendoExtraId(cirugiaId);
+    setSubiendoExtraId(cirugia.id);
     try {
       const adj = await subirExamenPrequirurgico(file);
       if (adj) {
-        persistir(
-          lista.map((c) =>
-            c.id === cirugiaId ? { ...c, examenesPreq: [...(c.examenesPreq || []), adj] } : c
-          )
-        );
+        const actualizada = {
+          ...cirugia,
+          examenesPreq: [...(cirugia.examenesPreq || []), adj]
+        };
+        await repo.modulos.guardar(paciente.id, "cirugia", actualizada);
+        setLista((prev) => prev.map((c) => (c.id === cirugia.id ? actualizada : c)));
         if (onRecargar) onRecargar();
       }
     } catch (err) {
@@ -799,22 +851,39 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
     }
   }
 
-  function eliminarMaterialCirugia(cirugiaId, matId) {
-    persistir(
-      lista.map((c) =>
-        c.id === cirugiaId
-          ? { ...c, materiales: (c.materiales || []).filter((m) => m.id !== matId) }
-          : c
-      )
-    );
+  async function eliminarMaterialCirugia(cirugia, matId) {
+    const actualizada = {
+      ...cirugia,
+      materiales: (cirugia.materiales || []).filter((m) => m.id !== matId)
+    };
+    try {
+      await repo.modulos.guardar(paciente.id, "cirugia", actualizada);
+      setLista((prev) => prev.map((c) => (c.id === cirugia.id ? actualizada : c)));
+    } catch (err) {
+      alert(err.message || "No se pudo eliminar el material.");
+    }
   }
 
-  function cambiarEstadoCirugia(cirugiaId, nuevoEstado) {
-    persistir(lista.map((c) => (c.id === cirugiaId ? { ...c, estado: nuevoEstado } : c)));
+  async function cambiarEstadoCirugia(cirugia, nuevoEstado) {
+    const actualizada = { ...cirugia, estado: nuevoEstado };
+    try {
+      await repo.modulos.guardar(paciente.id, "cirugia", actualizada);
+      setLista((prev) => prev.map((c) => (c.id === cirugia.id ? actualizada : c)));
+    } catch (err) {
+      alert(err.message || "No se pudo actualizar el estado.");
+    }
   }
 
-  function actualizarObsCirugia(cirugiaId, texto) {
-    persistir(lista.map((c) => (c.id === cirugiaId ? { ...c, observaciones: texto } : c)));
+  async function guardarObsCirugia(cirugia) {
+    const texto = obsEditadas[cirugia.id] ?? cirugia.observaciones ?? "";
+    if (texto === (cirugia.observaciones || "")) return;
+    const actualizada = { ...cirugia, observaciones: texto };
+    try {
+      await repo.modulos.guardar(paciente.id, "cirugia", actualizada);
+      setLista((prev) => prev.map((c) => (c.id === cirugia.id ? actualizada : c)));
+    } catch (err) {
+      alert(err.message || "No se pudieron guardar las observaciones.");
+    }
   }
 
   return (
@@ -910,7 +979,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
 
           <div className="ve-actions ve-ancho">
             <button type="submit" className="ve-button" disabled={subiendo}>
-              {subiendo ? "Guardando cirugía…" : "Guardar registro de cirugía"}
+              {subiendo ? "Guardando en la nube…" : "Guardar registro de cirugía"}
             </button>
           </div>
         </form>
@@ -919,15 +988,20 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
       <section className="ve-panel ve-pad">
         <div className="ve-row">
           <h2>Historial de Cirugías ({lista.length})</h2>
+          {cargando && <span className="ve-meta">Sincronizando…</span>}
         </div>
 
-        {lista.length === 0 ? (
+        {cargando ? (
+          <p className="ve-sub">Cargando cirugías…</p>
+        ) : lista.length === 0 ? (
           <p className="ve-sub">No hay cirugías programadas o realizadas para {paciente.nombre}.</p>
         ) : (
           <div style={{ display: "grid", gap: "0.9rem", marginTop: "0.75rem" }}>
             {lista.map((cir) => {
               const filasBorrador = obtenerBorrador(cir.id);
               const internistaActual = internistasMat[cir.id] ?? "";
+              const textoObsActual = obsEditadas[cir.id] !== undefined ? obsEditadas[cir.id] : cir.observaciones || "";
+
               return (
                 <div
                   key={cir.id}
@@ -970,7 +1044,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                     <div className="ve-actions">
                       <select
                         value={cir.estado}
-                        onChange={(e) => cambiarEstadoCirugia(cir.id, e.target.value)}
+                        onChange={(e) => cambiarEstadoCirugia(cir, e.target.value)}
                         className="ve-select"
                         aria-label="Estado de cirugía"
                       >
@@ -989,13 +1063,13 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                       </strong>
                       <label className="ve-link" style={{ cursor: "pointer", fontSize: "0.82rem" }}>
                         <Paperclip size={14} style={{ verticalAlign: "middle", marginRight: "4px" }} />
-                        {subiendoExtraId === cir.id ? "Subiendo…" : "+ Adjuntar examen prequirúrgico"}
+                        {subiendoExtraId === cir.id ? "Subiendo a Drive…" : "+ Adjuntar examen prequirúrgico"}
                         <input
                           type="file"
                           accept="application/pdf,image/jpeg,image/png,image/webp"
                           disabled={subiendoExtraId === cir.id}
                           onChange={(e) => {
-                            adjuntarMasPreq(cir.id, e.target.files?.[0]);
+                            adjuntarMasPreq(cir, e.target.files?.[0]);
                             e.target.value = "";
                           }}
                           style={{ display: "none" }}
@@ -1044,7 +1118,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                       Registro de materiales e hilos de sutura utilizados
                     </strong>
 
-                    <form onSubmit={(e) => guardarYSubirMateriales(cir.id, e)} style={{ display: "grid", gap: "0.6rem" }}>
+                    <form onSubmit={(e) => guardarYSubirMateriales(cir, e)} style={{ display: "grid", gap: "0.6rem" }}>
                       <div className="ve-field" style={{ maxWidth: "360px" }}>
                         <label>Nombre del internista que registra *</label>
                         <input
@@ -1137,13 +1211,18 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                         <Boton icono={Plus} onClick={() => agregarFilaBorrador(cir.id)}>
                           Agregar fila a la lista
                         </Boton>
-                        <button type="submit" className="ve-button" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-                          <Upload size={15} /> Guardar y subir
+                        <button
+                          type="submit"
+                          className="ve-button"
+                          disabled={guardandoMatId === cir.id}
+                          style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+                        >
+                          <Upload size={15} />
+                          {guardandoMatId === cir.id ? "Subiendo…" : "Guardar y subir"}
                         </button>
                       </div>
                     </form>
 
-                    {/* Lista ya registrada y guardada */}
                     {(cir.materiales || []).length > 0 && (
                       <div style={{ marginTop: "0.85rem", paddingTop: "0.65rem", borderTop: "1px dashed #cbd5e1" }}>
                         <strong style={{ fontSize: "0.84rem", display: "block", marginBottom: "0.4rem", color: "#0f172a" }}>
@@ -1169,7 +1248,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                                 <td style={{ textAlign: "right" }}>
                                   <button
                                     type="button"
-                                    onClick={() => eliminarMaterialCirugia(cir.id, m.id)}
+                                    onClick={() => eliminarMaterialCirugia(cir, m.id)}
                                     className="ve-link"
                                     title="Eliminar registro"
                                   >
@@ -1189,8 +1268,9 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                     <label>Observaciones de la cirugía</label>
                     <textarea
                       rows={2}
-                      value={cir.observaciones || ""}
-                      onChange={(e) => actualizarObsCirugia(cir.id, e.target.value)}
+                      value={textoObsActual}
+                      onChange={(e) => setObsEditadas({ ...obsEditadas, [cir.id]: e.target.value })}
+                      onBlur={() => guardarObsCirugia(cir)}
                       placeholder="Notas intraoperatorias o evolución postquirúrgica..."
                     />
                   </div>
@@ -1205,7 +1285,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
 }
 
 // ============================================================================
-// PESTAÑA DE COTIZACIONES (TABLA CÓMODA PARA INTERNISTAS)
+// PESTAÑA DE COTIZACIONES (TABLA CÓMODA SINCRONIZADA EN SUPABASE)
 // ============================================================================
 function crearFilasCotizacion() {
   return [
@@ -1215,22 +1295,39 @@ function crearFilasCotizacion() {
   ];
 }
 
-function PestanaCotizaciones({ paciente, profesionales }) {
-  const [cotStore, setCotStore] = useState(() => leerStore("elpibe_cotizaciones", {}));
-  const lista = cotStore[paciente.id] || [];
+function PestanaCotizaciones({ paciente, profesionales, revision }) {
+  const [lista, setLista] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
 
-  const [numeroCot, setNumeroCot] = useState(() => lista[0]?.numeroCotizacion || "");
+  const [numeroCot, setNumeroCot] = useState("");
   const [internista, setInternista] = useState("MVZ. Cristhian Romero");
   const [fecha, setFecha] = useState(fechaLocal(new Date()).slice(0, 10));
   const [filasTabla, setFilasTabla] = useState(() => crearFilasCotizacion());
   const [filtroCot, setFiltroCot] = useState("TODAS");
   const [avisoCot, setAvisoCot] = useState("");
+  const [errorCot, setErrorCot] = useState("");
 
-  function persistir(nuevaLista) {
-    const actualizado = { ...cotStore, [paciente.id]: nuevaLista };
-    setCotStore(actualizado);
-    guardarStore("elpibe_cotizaciones", actualizado);
-  }
+  const cargarCotizaciones = useCallback(async (signal) => {
+    setCargando(true);
+    try {
+      const items = await repo.modulos.listar(paciente.id, "cotizacion", signal);
+      setLista(items);
+      if (items[0]?.numeroCotizacion) {
+        setNumeroCot((prev) => prev || items[0].numeroCotizacion);
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") setErrorCot(e.message);
+    } finally {
+      setCargando(false);
+    }
+  }, [paciente.id]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    cargarCotizaciones(ac.signal);
+    return () => ac.abort();
+  }, [cargarCotizaciones, revision]);
 
   function actualizarFila(filaId, campo, valor) {
     setFilasTabla((prev) => prev.map((f) => (f.id === filaId ? { ...f, [campo]: valor } : f)));
@@ -1247,34 +1344,51 @@ function PestanaCotizaciones({ paciente, profesionales }) {
     setFilasTabla((prev) => (prev.length > 1 ? prev.filter((f) => f.id !== filaId) : crearFilasCotizacion()));
   }
 
-  function guardarTablaCotizacion(e) {
+  async function guardarTablaCotizacion(e) {
     e.preventDefault();
-    if (!numeroCot.trim() || !internista.trim()) return;
+    if (!numeroCot.trim() || !internista.trim() || guardando) return;
 
     const filasValidas = filasTabla.filter((f) => f.descripcion.trim() && f.cantidad.trim());
     if (filasValidas.length === 0) return;
 
-    const horaActual = hora(new Date());
-    const nuevosRegistros = filasValidas.map((f) => ({
-      id: uuid(),
-      numeroCotizacion: numeroCot.trim(),
-      internista: internista.trim(),
-      fecha,
-      tipoItem: f.tipoItem,
-      descripcion: f.descripcion.trim(),
-      cantidad: f.cantidad.trim(),
-      nota: f.nota.trim(),
-      horaRegistro: horaActual
-    }));
+    setGuardando(true);
+    setErrorCot("");
+    try {
+      const horaActual = hora(new Date());
+      const nuevosRegistros = await Promise.all(
+        filasValidas.map((f) =>
+          repo.modulos.guardar(paciente.id, "cotizacion", {
+            id: uuid(),
+            numeroCotizacion: numeroCot.trim(),
+            internista: internista.trim(),
+            fecha,
+            tipoItem: f.tipoItem,
+            descripcion: f.descripcion.trim(),
+            cantidad: f.cantidad.trim(),
+            nota: f.nota.trim(),
+            horaRegistro: horaActual
+          })
+        )
+      );
 
-    persistir([...nuevosRegistros, ...lista]);
-    setFilasTabla(crearFilasCotizacion());
-    setAvisoCot(`Se guardaron ${nuevosRegistros.length} ítem(s) en la cotización #${numeroCot.trim()}.`);
-    setTimeout(() => setAvisoCot(""), 4000);
+      setLista((prev) => [...nuevosRegistros, ...prev]);
+      setFilasTabla(crearFilasCotizacion());
+      setAvisoCot(`Se guardaron en la nube ${nuevosRegistros.length} ítem(s) en la cotización #${numeroCot.trim()}.`);
+      setTimeout(() => setAvisoCot(""), 4000);
+    } catch (err) {
+      setErrorCot(err.message || "No se pudo guardar la cotización.");
+    } finally {
+      setGuardando(false);
+    }
   }
 
-  function eliminarItem(itemId) {
-    persistir(lista.filter((it) => it.id !== itemId));
+  async function eliminarItem(itemId) {
+    try {
+      await repo.modulos.eliminar(itemId);
+      setLista((prev) => prev.filter((it) => it.id !== itemId));
+    } catch (err) {
+      setErrorCot(err.message);
+    }
   }
 
   const numerosUnicos = [...new Set(lista.map((it) => it.numeroCotizacion))];
@@ -1325,7 +1439,6 @@ function PestanaCotizaciones({ paciente, profesionales }) {
             </div>
           </div>
 
-          {/* Tabla cómoda de ingreso múltiple */}
           <div style={{ overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: "10px" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
               <thead>
@@ -1397,6 +1510,12 @@ function PestanaCotizaciones({ paciente, profesionales }) {
             </table>
           </div>
 
+          {errorCot && (
+            <p className="ve-message" role="alert" style={{ margin: 0 }}>
+              {errorCot}
+            </p>
+          )}
+
           {avisoCot && (
             <p className="ve-confirm" role="status" style={{ margin: 0 }}>
               {avisoCot}
@@ -1407,8 +1526,8 @@ function PestanaCotizaciones({ paciente, profesionales }) {
             <Boton icono={Plus} onClick={agregarFila}>
               Agregar fila
             </Boton>
-            <button type="submit" className="ve-button">
-              Guardar en cotización
+            <button type="submit" className="ve-button" disabled={guardando}>
+              {guardando ? "Guardando en la nube…" : "Guardar en cotización"}
             </button>
           </div>
         </form>
@@ -1434,7 +1553,9 @@ function PestanaCotizaciones({ paciente, profesionales }) {
           )}
         </div>
 
-        {filtrados.length === 0 ? (
+        {cargando ? (
+          <p className="ve-sub">Cargando cotizaciones…</p>
+        ) : filtrados.length === 0 ? (
           <p className="ve-sub">Aún no se han cargado insumos o medicinas en cotizaciones para {paciente.nombre}.</p>
         ) : (
           <div style={{ overflowX: "auto", marginTop: "0.75rem" }}>
@@ -1488,45 +1609,72 @@ function PestanaCotizaciones({ paciente, profesionales }) {
 }
 
 // ============================================================================
-// PESTAÑA DE PELUQUERÍAS ESTÉTICAS
+// PESTAÑA DE PELUQUERÍAS ESTÉTICAS (SINCRONIZADA EN SUPABASE)
 // ============================================================================
-function PestanaPeluqueria({ paciente }) {
-  const [peluStore, setPeluStore] = useState(() => leerStore("elpibe_peluquerias", {}));
-  const lista = peluStore[paciente.id] || [];
+function PestanaPeluqueria({ paciente, revision }) {
+  const [lista, setLista] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
 
   const [peluquero, setPeluquero] = useState("");
   const [fecha, setFecha] = useState(fechaLocal(new Date()).slice(0, 10));
   const [precio, setPrecio] = useState("");
   const [observacion, setObservacion] = useState("");
   const [avisoPelu, setAvisoPelu] = useState("");
+  const [errorPelu, setErrorPelu] = useState("");
 
-  function persistir(nuevaLista) {
-    const actualizado = { ...peluStore, [paciente.id]: nuevaLista };
-    setPeluStore(actualizado);
-    guardarStore("elpibe_peluquerias", actualizado);
-  }
+  const cargarPeluquerias = useCallback(async (signal) => {
+    setCargando(true);
+    try {
+      const items = await repo.modulos.listar(paciente.id, "peluqueria", signal);
+      setLista(items);
+    } catch (e) {
+      if (e.name !== "AbortError") setErrorPelu(e.message);
+    } finally {
+      setCargando(false);
+    }
+  }, [paciente.id]);
 
-  function guardarPeluqueria(e) {
+  useEffect(() => {
+    const ac = new AbortController();
+    cargarPeluquerias(ac.signal);
+    return () => ac.abort();
+  }, [cargarPeluquerias, revision]);
+
+  async function guardarPeluqueria(e) {
     e.preventDefault();
-    if (!peluquero.trim() || !fecha || precio === "") return;
+    if (!peluquero.trim() || !fecha || precio === "" || guardando) return;
 
-    const nuevo = {
-      id: uuid(),
-      peluquero: peluquero.trim(),
-      fecha,
-      precio: parseFloat(precio) || 0,
-      observacion: observacion.trim()
-    };
+    setGuardando(true);
+    setErrorPelu("");
+    try {
+      const nuevo = await repo.modulos.guardar(paciente.id, "peluqueria", {
+        id: uuid(),
+        peluquero: peluquero.trim(),
+        fecha,
+        precio: parseFloat(precio) || 0,
+        observacion: observacion.trim()
+      });
 
-    persistir([nuevo, ...lista]);
-    setPrecio("");
-    setObservacion("");
-    setAvisoPelu(`Peluquería estética registrada para ${paciente.nombre}.`);
-    setTimeout(() => setAvisoPelu(""), 4000);
+      setLista((prev) => [nuevo, ...prev]);
+      setPrecio("");
+      setObservacion("");
+      setAvisoPelu(`Peluquería estética registrada en la nube para ${paciente.nombre}.`);
+      setTimeout(() => setAvisoPelu(""), 4000);
+    } catch (err) {
+      setErrorPelu(err.message || "No se pudo guardar el registro.");
+    } finally {
+      setGuardando(false);
+    }
   }
 
-  function eliminarPeluqueria(regId) {
-    persistir(lista.filter((r) => r.id !== regId));
+  async function eliminarPeluqueria(regId) {
+    try {
+      await repo.modulos.eliminar(regId);
+      setLista((prev) => prev.filter((r) => r.id !== regId));
+    } catch (err) {
+      setErrorPelu(err.message);
+    }
   }
 
   const peluquerosPrevios = [...new Set(lista.map((r) => r.peluquero).filter(Boolean))];
@@ -1591,6 +1739,12 @@ function PestanaPeluqueria({ paciente }) {
             />
           </div>
 
+          {errorPelu && (
+            <p className="ve-message ve-ancho" role="alert" style={{ margin: 0 }}>
+              {errorPelu}
+            </p>
+          )}
+
           {avisoPelu && (
             <p className="ve-confirm ve-ancho" role="status" style={{ margin: 0 }}>
               {avisoPelu}
@@ -1598,8 +1752,8 @@ function PestanaPeluqueria({ paciente }) {
           )}
 
           <div className="ve-actions ve-ancho">
-            <button type="submit" className="ve-button">
-              Guardar
+            <button type="submit" className="ve-button" disabled={guardando}>
+              {guardando ? "Guardando en la nube…" : "Guardar"}
             </button>
           </div>
         </form>
@@ -1610,7 +1764,9 @@ function PestanaPeluqueria({ paciente }) {
           <h2>Historial de Peluquerías Estéticas ({lista.length})</h2>
         </div>
 
-        {lista.length === 0 ? (
+        {cargando ? (
+          <p className="ve-sub">Cargando historial de peluquería…</p>
+        ) : lista.length === 0 ? (
           <p className="ve-sub">Aún no hay registros de peluquería estética para {paciente.nombre}.</p>
         ) : (
           <div style={{ overflowX: "auto", marginTop: "0.75rem" }}>
@@ -1726,7 +1882,7 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
           revision={revision}
         />
 
-        <PanelTerapiasComplementarias admisionId={admision.id} profesionales={profesionales} />
+        <PanelTerapiasComplementarias admisionId={admision.id} profesionales={profesionales} revision={revision} />
 
         {altaTarget && (
           <ModalAltaHospital
@@ -1933,12 +2089,15 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
           anexos={anexos}
           profesionales={profesionales}
           onRecargar={recargar}
+          revision={revision}
         />
       )}
 
-      {pestana === "cotizaciones" && <PestanaCotizaciones paciente={p} profesionales={profesionales} />}
+      {pestana === "cotizaciones" && (
+        <PestanaCotizaciones paciente={p} profesionales={profesionales} revision={revision} />
+      )}
 
-      {pestana === "peluqueria" && <PestanaPeluqueria paciente={p} />}
+      {pestana === "peluqueria" && <PestanaPeluqueria paciente={p} revision={revision} />}
 
       {pestana === "examenes" && (
         <section className="ve-panel ve-pad">
@@ -2009,23 +2168,21 @@ export default function App() {
   const [aviso, A] = useState("");
   const [ingresoId, VerIngreso] = useState("");
   const [filtroDir, setFiltroDir] = useState("todos");
-  const [hospMapa, setHospMapa] = useState(() => leerStore("elpibe_hosp_activos", {}));
+  const [hospMapa, setHospMapa] = useState({});
 
   function recargar() {
     Rev((n) => n + 1);
   }
 
-  function actualizarHospPaciente(pacienteId, info) {
+  const actualizarHospPaciente = useCallback((pacienteId, info) => {
     setHospMapa((prev) => {
       const actual = prev[pacienteId];
       if (actual?.activa === info.activa && (actual?.jaula || "") === (info.jaula || "")) {
         return prev;
       }
-      const next = { ...prev, [pacienteId]: info };
-      guardarStore("elpibe_hosp_activos", next);
-      return next;
+      return { ...prev, [pacienteId]: info };
     });
-  }
+  }, []);
 
   useEffect(() => {
     const fn = () => recargar();
