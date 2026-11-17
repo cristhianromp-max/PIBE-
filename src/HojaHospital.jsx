@@ -184,7 +184,7 @@ export function HojaHospital({paciente,admision,profesionales,repo,fotos,editarF
   function cambiarDia(nuevo){if(nuevo){Dia(nuevo);Aviso("");ErrorHoja("");}}
   function guardado(mensaje,verDia){Accion(null);Dia(verDia);Aviso(mensaje);actualizar();}
 
-  const fotoId=h?h.foto_id:paciente.foto_id, jaula=h?h.jaula:admision.jaula;
+  const fotoId=paciente.foto_id||h?.foto_id||null, jaula=h?h.jaula:admision.jaula;
   const ingresoAbierto=h?.abierta??admision.abierta;
 
   function jaulaGuardada(nueva) {
