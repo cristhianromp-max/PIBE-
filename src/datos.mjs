@@ -799,17 +799,25 @@ function crearRepositorio(config) {
       await modulos.eliminar(an.id).catch(() => null);
     }
 
-    // 4. Eliminar ficha del paciente en Supabase (vía RPC o DELETE directo)
+    // 4. Eliminar ficha del paciente en Supabase (vía RPC SECURITY DEFINER)
     try {
       await rpc("pibe_eliminar_paciente", { paciente: pid });
       return true;
-    } catch {
-      try {
-        await rpc("pibe_eliminar_paciente", { id: pid });
-        return true;
-      } catch {}
+    } catch (errRpc) {
+      // Respaldo por REST verificando que realmente se haya borrado al menos 1 fila
+      const resPac = await fetch(`${config.url}/rest/v1/pibe_pacientes?id=eq.${encodeURIComponent(pid)}`, {
+        method: "DELETE",
+        headers: { ...headersSupabase, Prefer: "return=representation" }
+      });
+      const borrados = resPac.ok ? await resPac.json().catch(() => []) : [];
+      if (!borrados.length) {
+        throw Error(
+          errRpc?.message ||
+            "No se pudo borrar la ficha en Supabase. Ejecuta el SQL de pibe_eliminar_paciente en el SQL Editor."
+        );
+      }
+      return true;
     }
-
     // Respaldo por REST si no está creada la RPC pibe_eliminar_paciente
     for (const an of listaAnexos) {
       await fetch(`${config.url}/rest/v1/pibe_examenes?id=eq.${encodeURIComponent(String(an.id))}`, {
