@@ -3,7 +3,7 @@ import {
   Camera, Search, Plus, Pencil, RefreshCw, ArrowLeft, ChevronRight,
   FolderOpen, Paperclip, Activity, FileText, X, Scissors, Receipt,
   LogOut, CheckCircle2, Trash2, Sparkles, Upload,
-  Bell, Clock, AlertTriangle, Syringe
+  Bell, Clock, AlertTriangle, Syringe, MessageCircle
 } from "lucide-react";
 import { crearRepositorio, etiquetas, fechaCorta, fechaLocal, hora, edad, uuid } from "./datos.mjs";
 import { config, marca } from "./config";
@@ -36,6 +36,21 @@ const TIPOS_TERAPIA_HOSP = [
   "Ozonoterapia",
   "Nebulización"
 ];
+
+// ============================================================================
+// UTILIDAD PARA ENLACE DIRECTO A WHATSAPP (ECUADOR +593)
+// ============================================================================
+function obtenerEnlaceWhatsApp(telefono) {
+  const digitos = String(telefono || "").replace(/\D/g, "");
+  if (!digitos) return "";
+  if (digitos.startsWith("09") && digitos.length === 10) {
+    return `https://wa.me/593${digitos.slice(1)}`;
+  }
+  if (digitos.startsWith("9") && digitos.length === 9) {
+    return `https://wa.me/593${digitos}`;
+  }
+  return `https://wa.me/${digitos}`;
+}
 
 // ============================================================================
 // UTILIDADES DE CÁLCULO DE HORARIOS (VENTANA < 3 HORAS)
@@ -116,8 +131,6 @@ function calcularEstadoDosis(item, ahoraMs) {
   const diffMin = Math.round((proximaDate.getTime() - ahoraMs) / 60000);
   const urgencia = diffMin < 0 ? "atrasado" : diffMin <= VENTANA_NOTIFICACION_MIN ? "proximo" : "programado";
 
-  // Visible SOLO si está activo, no es dosis única ya aplicada, y falta <= 3 horas (180 min) o está atrasado.
-  // Una vez medicado y que falten > 3 horas para la siguiente toma, se elimina de la lista.
   const visibleEnNotificaciones =
     item.activa !== false &&
     !(esDosisUnica && appsParseadas.length > 0) &&
@@ -144,6 +157,134 @@ function SelectorJaula({ valor }) {
       ? [...OPCIONES_JAULAS, [valor, valor]]
       : OPCIONES_JAULAS;
   return <Campo etiqueta="Jaula / Área" nombre="jaula" valor={valor || ""} opciones={opciones} />;
+}
+
+// ============================================================================
+// MODAL DE CONFIRMACIÓN PARA ELIMINAR PACIENTE DEFINITIVAMENTE
+// ============================================================================
+function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onEliminado }) {
+  const dialog = useRef(null);
+  const [eliminando, setEliminando] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const el = dialog.current;
+    if (el && !el.open) el.showModal();
+    return () => {
+      if (el?.open) el.close();
+    };
+  }, []);
+
+  async function confirmarEliminacion() {
+    if (eliminando) return;
+    setEliminando(true);
+    setError("");
+    try {
+      // 1. Limpiar registros asociados en módulos (cirugías, cotizaciones, peluquería)
+      const tiposModulos = ["cirugia", "cotizacion", "peluqueria"];
+      for (const tipo of tiposModulos) {
+        try {
+          const items = await repo.modulos.listar(paciente.id, tipo);
+          await Promise.all(items.map((it) => repo.modulos.eliminar(it.id)));
+        } catch {
+          // Continuar si algún módulo no tiene registros
+        }
+      }
+
+      // 2. Eliminar paciente, atenciones y exámenes/fotos en la nube
+      if (typeof repo.eliminarPaciente === "function") {
+        await repo.eliminarPaciente(paciente.id, { atenciones, anexos });
+      } else {
+        throw new Error(
+          "Falta configurar la función 'eliminarPaciente' en datos.mjs para borrar archivos de la nube."
+        );
+      }
+
+      onEliminado(paciente.nombre);
+    } catch (err) {
+      setError(err.message || "No se pudo eliminar el paciente.");
+      setEliminando(false);
+    }
+  }
+
+  return (
+    <dialog
+      className="ve-dialog"
+      ref={dialog}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!eliminando) cerrar();
+      }}
+      aria-labelledby="titulo-eliminar-paciente"
+    >
+      <div>
+        <div className="ve-row">
+          <h2
+            id="titulo-eliminar-paciente"
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#991b1b" }}
+          >
+            <AlertTriangle size={20} color="#dc2626" /> Eliminar paciente
+          </h2>
+          <Boton icono={X} aria-label="Cerrar" onClick={cerrar} disabled={eliminando} />
+        </div>
+
+        <div
+          style={{
+            marginTop: "0.85rem",
+            padding: "0.85rem",
+            borderRadius: "8px",
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            color: "#7f1d1d",
+            fontSize: "0.9rem",
+            lineHeight: 1.45
+          }}
+        >
+          <p style={{ margin: "0 0 0.5rem" }}>
+            ¿Estás seguro de que deseas eliminar a <strong>{paciente.nombre}</strong> ({paciente.codigo})?
+          </p>
+          <p style={{ margin: 0 }}>
+            <strong>Advertencia:</strong> Se perderán todos los datos de manera definitiva, incluyendo su historia
+            clínica, hospitalizaciones, cirugías, cotizaciones y{" "}
+            <strong>todos los exámenes y archivos subidos a la nube ({anexos.length})</strong>. Esta acción no se puede
+            deshacer.
+          </p>
+        </div>
+
+        {error && (
+          <p className="ve-message" role="alert" style={{ marginTop: "0.75rem" }}>
+            {error}
+          </p>
+        )}
+
+        <footer className="ve-actions ve-last">
+          <Boton onClick={cerrar} disabled={eliminando}>
+            Cancelar
+          </Boton>
+          <button
+            type="button"
+            onClick={confirmarEliminacion}
+            disabled={eliminando}
+            style={{
+              background: "#dc2626",
+              color: "#fff",
+              border: "none",
+              borderRadius: "8px",
+              padding: "0.55rem 0.95rem",
+              fontWeight: 700,
+              cursor: eliminando ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.4rem"
+            }}
+          >
+            <Trash2 size={15} />
+            {eliminando ? "Eliminando datos y archivos…" : "Aceptar y eliminar definitivamente"}
+          </button>
+        </footer>
+      </div>
+    </dialog>
+  );
 }
 
 // ============================================================================
@@ -1384,7 +1525,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                           return (
                             <div key={ex.id} className="ve-row" style={{ fontSize: "0.84rem" }}>
                               <span>
-                                • {ex.nombre} <span className="ve-meta">({ex.fecha})</span>
+                                - {ex.nombre} <span className="ve-meta">({ex.fecha})</span>
                               </span>
                               {realAnexo && (
                                 <div className="ve-actions">
@@ -1585,7 +1726,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
 }
 
 // ============================================================================
-// PESTAÑA DE COTIZACIONES (TABLA CÓMODA SINCRONIZADA EN SUPABASE)
+// PESTAÑA DE COTIZACIONES (CON ESTADO PENDIENTE / COBRADO Y GUARDAR CAMBIOS)
 // ============================================================================
 function crearFilasCotizacion() {
   return [
@@ -1608,11 +1749,16 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
   const [avisoCot, setAvisoCot] = useState("");
   const [errorCot, setErrorCot] = useState("");
 
+  // Control de cambios pendientes de estado (Pendiente <-> Cobrado)
+  const [cambiosEstado, setCambiosEstado] = useState({});
+  const [guardandoEstados, setGuardandoEstados] = useState(false);
+
   const cargarCotizaciones = useCallback(async (signal) => {
     setCargando(true);
     try {
       const items = await repo.modulos.listar(paciente.id, "cotizacion", signal);
       setLista(items);
+      setCambiosEstado({});
       if (items[0]?.numeroCotizacion) {
         setNumeroCot((prev) => prev || items[0].numeroCotizacion);
       }
@@ -1666,7 +1812,8 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
             descripcion: f.descripcion.trim(),
             cantidad: f.cantidad.trim(),
             nota: f.nota.trim(),
-            horaRegistro: horaActual
+            horaRegistro: horaActual,
+            estadoCobro: "pendiente"
           })
         )
       );
@@ -1682,10 +1829,58 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
     }
   }
 
+  function seleccionarEstadoCobro(item, nuevoEstado) {
+    const estadoGuardado = item.estadoCobro || "pendiente";
+    setCambiosEstado((prev) => {
+      const copia = { ...prev };
+      if (nuevoEstado === estadoGuardado) {
+        delete copia[item.id];
+      } else {
+        copia[item.id] = nuevoEstado;
+      }
+      return copia;
+    });
+  }
+
+  async function guardarCambiosEstado() {
+    const idsModificados = Object.keys(cambiosEstado);
+    if (idsModificados.length === 0 || guardandoEstados) return;
+
+    setGuardandoEstados(true);
+    setErrorCot("");
+    try {
+      const actualizados = await Promise.all(
+        idsModificados.map((itemId) => {
+          const original = lista.find((it) => it.id === itemId);
+          if (!original) return null;
+          return repo.modulos.guardar(paciente.id, "cotizacion", {
+            ...original,
+            estadoCobro: cambiosEstado[itemId]
+          });
+        })
+      );
+
+      const mapaActualizados = new Map(actualizados.filter(Boolean).map((it) => [it.id, it]));
+      setLista((prev) => prev.map((it) => mapaActualizados.get(it.id) || it));
+      setCambiosEstado({});
+      setAvisoCot(`Estado de cobro actualizado (${idsModificados.length} registro(s)).`);
+      setTimeout(() => setAvisoCot(""), 4000);
+    } catch (err) {
+      setErrorCot(err.message || "No se pudieron guardar los cambios de estado.");
+    } finally {
+      setGuardandoEstados(false);
+    }
+  }
+
   async function eliminarItem(itemId) {
     try {
       await repo.modulos.eliminar(itemId);
       setLista((prev) => prev.filter((it) => it.id !== itemId));
+      setCambiosEstado((prev) => {
+        const copia = { ...prev };
+        delete copia[itemId];
+        return copia;
+      });
     } catch (err) {
       setErrorCot(err.message);
     }
@@ -1693,6 +1888,7 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
 
   const numerosUnicos = [...new Set(lista.map((it) => it.numeroCotizacion))];
   const filtrados = filtroCot === "TODAS" ? lista : lista.filter((it) => it.numeroCotizacion === filtroCot);
+  const cantidadCambios = Object.keys(cambiosEstado).length;
 
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
@@ -1834,23 +2030,42 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
       </section>
 
       <section className="ve-panel ve-pad">
-        <div className="ve-row">
+        <div className="ve-row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <h2>Historial de Cotizaciones e Insumos ({filtrados.length})</h2>
-          {numerosUnicos.length > 0 && (
-            <select
-              value={filtroCot}
-              onChange={(e) => setFiltroCot(e.target.value)}
-              className="ve-select"
-              aria-label="Filtrar por número de cotización"
+          <div className="ve-actions" style={{ flexWrap: "wrap" }}>
+            {numerosUnicos.length > 0 && (
+              <select
+                value={filtroCot}
+                onChange={(e) => setFiltroCot(e.target.value)}
+                className="ve-select"
+                aria-label="Filtrar por número de cotización"
+              >
+                <option value="TODAS">Todas las cotizaciones ({numerosUnicos.length})</option>
+                {numerosUnicos.map((num) => (
+                  <option key={num} value={num}>
+                    Cotización #{num}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <button
+              type="button"
+              className="ve-button"
+              onClick={guardarCambiosEstado}
+              disabled={cantidadCambios === 0 || guardandoEstados}
+              style={{
+                opacity: cantidadCambios === 0 ? 0.55 : 1,
+                cursor: cantidadCambios === 0 ? "not-allowed" : "pointer"
+              }}
             >
-              <option value="TODAS">Todas las cotizaciones ({numerosUnicos.length})</option>
-              {numerosUnicos.map((num) => (
-                <option key={num} value={num}>
-                  Cotización #{num}
-                </option>
-              ))}
-            </select>
-          )}
+              {guardandoEstados
+                ? "Guardando…"
+                : cantidadCambios > 0
+                ? `Guardar cambios (${cantidadCambios})`
+                : "Guardar cambios"}
+            </button>
+          </div>
         </div>
 
         {cargando ? (
@@ -1868,37 +2083,86 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
                   <th style={{ padding: "0.5rem 0.35rem" }}>Material / Medicina / Insumo</th>
                   <th style={{ padding: "0.5rem 0.35rem" }}>Cantidad</th>
                   <th style={{ padding: "0.5rem 0.35rem" }}>Internista</th>
+                  <th style={{ padding: "0.5rem 0.35rem" }}>Estado</th>
                   <th style={{ width: "36px" }}></th>
                 </tr>
               </thead>
               <tbody>
-                {filtrados.map((it) => (
-                  <tr key={it.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "0.5rem 0.35rem" }}>
-                      <span className="ve-badge">#{it.numeroCotizacion}</span>
-                    </td>
-                    <td style={{ padding: "0.5rem 0.35rem" }}>
-                      {it.fecha} <span className="ve-meta">{it.horaRegistro}</span>
-                    </td>
-                    <td style={{ padding: "0.5rem 0.35rem" }}>{it.tipoItem}</td>
-                    <td style={{ padding: "0.5rem 0.35rem" }}>
-                      <strong>{it.descripcion}</strong>
-                      {it.nota && <div className="ve-meta">{it.nota}</div>}
-                    </td>
-                    <td style={{ padding: "0.5rem 0.35rem", fontWeight: 700 }}>{it.cantidad}</td>
-                    <td style={{ padding: "0.5rem 0.35rem" }}>{it.internista}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
-                        type="button"
-                        onClick={() => eliminarItem(it.id)}
-                        className="ve-link"
-                        title="Eliminar registro"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filtrados.map((it) => {
+                  const estadoActual = cambiosEstado[it.id] ?? it.estadoCobro ?? "pendiente";
+                  const tieneCambio = cambiosEstado[it.id] !== undefined;
+                  const esCobrado = estadoActual === "cobrado";
+
+                  return (
+                    <tr
+                      key={it.id}
+                      style={{
+                        borderBottom: "1px solid #f1f5f9",
+                        background: tieneCambio ? "#fefce8" : "transparent"
+                      }}
+                    >
+                      <td style={{ padding: "0.5rem 0.35rem" }}>
+                        <span className="ve-badge">#{it.numeroCotizacion}</span>
+                      </td>
+                      <td style={{ padding: "0.5rem 0.35rem" }}>
+                        {it.fecha} <span className="ve-meta">{it.horaRegistro}</span>
+                      </td>
+                      <td style={{ padding: "0.5rem 0.35rem" }}>{it.tipoItem}</td>
+                      <td style={{ padding: "0.5rem 0.35rem" }}>
+                        <strong>{it.descripcion}</strong>
+                        {it.nota && <div className="ve-meta">{it.nota}</div>}
+                      </td>
+                      <td style={{ padding: "0.5rem 0.35rem", fontWeight: 700 }}>{it.cantidad}</td>
+                      <td style={{ padding: "0.5rem 0.35rem" }}>{it.internista}</td>
+                      <td style={{ padding: "0.5rem 0.35rem" }}>
+                        <div style={{ display: "inline-flex", gap: "0.25rem", alignItems: "center" }}>
+                          <button
+                            type="button"
+                            onClick={() => seleccionarEstadoCobro(it, "pendiente")}
+                            style={{
+                              padding: "0.22rem 0.5rem",
+                              borderRadius: "6px",
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              border: !esCobrado ? "1.5px solid #dc2626" : "1px solid #cbd5e1",
+                              background: !esCobrado ? "#fee2e2" : "#f8fafc",
+                              color: !esCobrado ? "#991b1b" : "#64748b"
+                            }}
+                          >
+                            Pendiente
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => seleccionarEstadoCobro(it, "cobrado")}
+                            style={{
+                              padding: "0.22rem 0.5rem",
+                              borderRadius: "6px",
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              border: esCobrado ? "1.5px solid #16a34a" : "1px solid #cbd5e1",
+                              background: esCobrado ? "#dcfce7" : "#f8fafc",
+                              color: esCobrado ? "#166534" : "#64748b"
+                            }}
+                          >
+                            Cobrado
+                          </button>
+                        </div>
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <button
+                          type="button"
+                          onClick={() => eliminarItem(it.id)}
+                          className="ve-link"
+                          title="Eliminar registro"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -2113,6 +2377,161 @@ function PestanaPeluqueria({ paciente, revision }) {
 }
 
 // ============================================================================
+// BANCO DE DOCUMENTOS GLOBAL (DEBAJO DE PACIENTES)
+// ============================================================================
+function BancoDocumentos({ pacientesLista, revision, onSeleccionarPaciente }) {
+  const android = globalThis.Capacitor?.getPlatform?.() === "android";
+  const [busquedaDoc, setBusquedaDoc] = useState("");
+  const [documentos, setDocumentos] = useState([]);
+  const [cargando, setCargando] = useState(false);
+
+  const cargarTodosLosDocumentos = useCallback(async (signal) => {
+    setCargando(true);
+    try {
+      // Si datos.mjs implementa listarDocumentos directamente, lo usa primero
+      if (typeof repo.listarDocumentos === "function") {
+        const res = await repo.listarDocumentos("", signal);
+        setDocumentos(res || []);
+        return;
+      }
+
+      // Caso contrario, recopila los anexos de los expedientes disponibles
+      let pacs = pacientesLista || [];
+      if (pacs.length === 0) {
+        const r = await repo.listar("", 0, signal);
+        pacs = r.items || [];
+      }
+
+      const expedientes = await Promise.all(
+        pacs.slice(0, 40).map((p) =>
+          repo.expediente(p.id, signal).catch(() => null)
+        )
+      );
+
+      const acumulados = [];
+      for (const exp of expedientes) {
+        if (!exp?.p || !exp?.anexos?.length) continue;
+        for (const anexo of exp.anexos) {
+          const atencionRel = (exp.atenciones || []).find((a) => a.id === anexo.atencion_id);
+          acumulados.push({
+            ...anexo,
+            pacienteId: exp.p.id,
+            pacienteNombre: exp.p.nombre,
+            atencionTitulo: atencionRel?.titulo || "",
+            fechaOrden: anexo.creado_en || atencionRel?.inicio || ""
+          });
+        }
+      }
+
+      acumulados.sort((a, b) => String(b.fechaOrden).localeCompare(String(a.fechaOrden)));
+      setDocumentos(acumulados);
+    } catch (e) {
+      if (e.name !== "AbortError") console.error(e);
+    } finally {
+      setCargando(false);
+    }
+  }, [pacientesLista]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    cargarTodosLosDocumentos(ac.signal);
+    return () => ac.abort();
+  }, [cargarTodosLosDocumentos, revision]);
+
+  const termino = busquedaDoc.trim().toLowerCase();
+  const coincidencias = termino
+    ? documentos.filter(
+        (d) =>
+          String(d.nombre || "").toLowerCase().includes(termino) ||
+          String(d.pacienteNombre || "").toLowerCase().includes(termino) ||
+          String(d.atencionTitulo || "").toLowerCase().includes(termino)
+      )
+    : documentos.slice(0, 4);
+
+  return (
+    <section className="ve-panel ve-pad" style={{ marginTop: "1rem" }}>
+      <div className="ve-row" style={{ marginBottom: "0.5rem" }}>
+        <h2 style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "1rem", margin: 0 }}>
+          <FolderOpen size={17} /> Banco de documentos
+        </h2>
+        <span className="ve-badge" style={{ fontSize: "0.7rem" }}>
+          {termino ? `${coincidencias.length} hallados` : "Últimos 4"}
+        </span>
+      </div>
+
+      <div className="ve-search">
+        <Search size={16} />
+        <input
+          type="search"
+          value={busquedaDoc}
+          aria-label="Buscar documento o paciente"
+          placeholder="Documento o paciente…"
+          onChange={(e) => setBusquedaDoc(e.target.value)}
+        />
+      </div>
+
+      <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.65rem" }}>
+        {cargando && documentos.length === 0 ? (
+          <p className="ve-meta">Cargando documentos…</p>
+        ) : coincidencias.length === 0 ? (
+          <p className="ve-meta">
+            {termino ? "Sin documentos que coincidan." : "Aún no hay exámenes ni fotos subidas."}
+          </p>
+        ) : (
+          coincidencias.map((doc) => (
+            <div
+              key={doc.id}
+              style={{
+                border: "1px solid var(--borde, #e2e8f0)",
+                borderRadius: "8px",
+                padding: "0.55rem 0.65rem",
+                background: "#f8fafc",
+                fontSize: "0.82rem"
+              }}
+            >
+              <div style={{ fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>
+                {doc.nombre}
+              </div>
+              <div className="ve-meta" style={{ marginTop: "0.15rem" }}>
+                Paciente:{" "}
+                <button
+                  type="button"
+                  className="ve-link"
+                  style={{ fontWeight: 700, padding: 0, fontSize: "0.8rem" }}
+                  onClick={() => onSeleccionarPaciente(doc.pacienteId)}
+                >
+                  {doc.pacienteNombre}
+                </button>
+                {doc.bytes ? ` · ${Math.max(1, Math.round(doc.bytes / 1024))} KB` : ""}
+              </div>
+              <div className="ve-actions" style={{ marginTop: "0.35rem", gap: "0.6rem" }}>
+                <a
+                  href={repo.enlace(doc, false)}
+                  target={android ? "_self" : "_blank"}
+                  rel="noopener noreferrer"
+                  className="ve-link"
+                  style={{ fontSize: "0.78rem" }}
+                >
+                  Ver
+                </a>
+                <a
+                  href={repo.enlace(doc, true)}
+                  download={android ? undefined : doc.nombre}
+                  className="ve-link"
+                  style={{ fontSize: "0.78rem" }}
+                >
+                  Descargar
+                </a>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
 // HISTORIA CLÍNICA DEL PACIENTE
 // ============================================================================
 function Historia({
@@ -2125,13 +2544,15 @@ function Historia({
   recargar,
   onSyncHosp,
   onAltaSuccess,
-  onCambioNotificaciones
+  onCambioNotificaciones,
+  onPacienteEliminado
 }) {
   const android = globalThis.Capacitor?.getPlatform?.() === "android";
   const { p, atenciones, anexos } = ficha;
   const [filtro, Filtro] = useState("todos");
   const [pestana, setPestana] = useState("clinica");
   const [altaTarget, setAltaTarget] = useState(null);
+  const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false);
 
   const ultima = atenciones.find((a) => a.peso != null);
   const profesionales = [...new Set(atenciones.map((a) => a.profesional).filter(Boolean))];
@@ -2227,10 +2648,35 @@ function Historia({
     );
   }
 
+  const enlaceWhatsApp = obtenerEnlaceWhatsApp(p.telefono);
+
   const campos = [
     ["Propietario", p.propietario],
     ["Cédula", p.cedula],
-    ["Teléfono", p.telefono],
+    [
+      "Teléfono",
+      p.telefono && enlaceWhatsApp ? (
+        <a
+          href={enlaceWhatsApp}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Abrir chat en WhatsApp"
+          style={{
+            color: "#15803d",
+            fontWeight: 700,
+            textDecoration: "underline",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.3rem"
+          }}
+        >
+          <MessageCircle size={14} />
+          {p.telefono}
+        </a>
+      ) : (
+        p.telefono
+      )
+    ],
     ["Sexo", p.sexo],
     ["Raza", p.raza],
     ["Edad", edad(p.nacimiento, p.edad_estimada)],
@@ -2268,13 +2714,32 @@ function Historia({
                 </div>
               </div>
 
-              <div className="ve-actions">
+              <div className="ve-actions" style={{ flexWrap: "wrap" }}>
                 <Boton icono={Camera} onClick={() => editarFoto()}>
                   {p.foto_id ? "Cambiar foto" : "Añadir foto"}
                 </Boton>
                 <Boton icono={Pencil} onClick={() => abrir({ clase: "paciente", d: p, pid: p.id })}>
                   Editar ficha
                 </Boton>
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalEliminar(true)}
+                  style={{
+                    background: "#fee2e2",
+                    color: "#991b1b",
+                    border: "1px solid #fca5a5",
+                    borderRadius: "8px",
+                    padding: "0.45rem 0.75rem",
+                    fontWeight: 700,
+                    fontSize: "0.84rem",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.35rem"
+                  }}
+                >
+                  <Trash2 size={15} /> Eliminar
+                </button>
               </div>
             </div>
 
@@ -2474,6 +2939,19 @@ function Historia({
           }}
         />
       )}
+
+      {mostrarModalEliminar && (
+        <ModalEliminarPaciente
+          paciente={p}
+          atenciones={atenciones}
+          anexos={anexos}
+          cerrar={() => setMostrarModalEliminar(false)}
+          onEliminado={(nombreEliminado) => {
+            setMostrarModalEliminar(false);
+            if (onPacienteEliminado) onPacienteEliminado(nombreEliminado);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -2515,7 +2993,6 @@ export default function App() {
     });
   }, []);
 
-  // Cargar notificaciones globales (Hoja de Hospitalización + Terapias tópicas/complementarias)
   const cargarNotificaciones = useCallback(async (signal) => {
     setCargaNotif(true);
     try {
@@ -2646,7 +3123,6 @@ export default function App() {
     recargar();
   }
 
-  // Solo los pacientes atrasados o próximos en menos de 3 horas (180 min)
   const pendientes3Horas = pautasActivas
     .map((item) => ({
       ...item,
@@ -2811,124 +3287,133 @@ export default function App() {
         )}
 
         <div className={"ve-main " + (id ? "has-patient" : "")}>
-          <section className="ve-panel ve-directory">
-            <div className="ve-pad">
-              <h2>Pacientes</h2>
-              <div className="ve-search">
-                <Search size={17} />
-                <input
-                  type="search"
-                  value={q}
-                  aria-label="Buscar por paciente, propietario o cédula"
-                  placeholder="Paciente, propietario o cédula"
-                  onChange={(e) => {
-                    Q(e.target.value);
-                    Pag(0);
-                    seleccionar("");
-                  }}
-                />
-              </div>
-
-              <div className="ve-actions" style={{ marginTop: "0.55rem", flexWrap: "wrap", gap: "0.35rem" }}>
-                <button
-                  type="button"
-                  onClick={() => setFiltroDir("todos")}
-                  className={filtroDir === "todos" ? "ve-button" : "ve-link"}
-                  style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
-                >
-                  Todos ({resultado.items.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFiltroDir("hospitalizados")}
-                  className={filtroDir === "hospitalizados" ? "ve-button" : "ve-link"}
-                  style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
-                >
-                  Hospitalizados ({pacientesHosp.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFiltroDir("otros")}
-                  className={filtroDir === "otros" ? "ve-button" : "ve-link"}
-                  style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
-                >
-                  Otros ({pacientesOtros.length})
-                </button>
-              </div>
-
-              <span role="status" className="ve-meta" style={{ display: "block", marginTop: "0.35rem" }}>
-                {resultado.carga ? "Buscando…" : resultado.items.length + " en esta página"}
-              </span>
-            </div>
-
-            <div className="ve-patients">
-              {(filtroDir === "todos" || filtroDir === "hospitalizados") && pacientesHosp.length > 0 && (
-                <>
-                  <div
-                    style={{
-                      padding: "0.35rem 0.85rem",
-                      background: "#fef2f2",
-                      color: "#991b1b",
-                      fontSize: "0.72rem",
-                      fontWeight: 800,
-                      letterSpacing: "0.04em",
-                      textTransform: "uppercase",
-                      borderTop: "1px solid #fecaca",
-                      borderBottom: "1px solid #fecaca"
+          <div style={{ display: "grid", gap: "1rem", alignContent: "start" }}>
+            <section className="ve-panel ve-directory">
+              <div className="ve-pad">
+                <h2>Pacientes</h2>
+                <div className="ve-search">
+                  <Search size={17} />
+                  <input
+                    type="search"
+                    value={q}
+                    aria-label="Buscar por paciente, propietario o cédula"
+                    placeholder="Paciente, propietario o cédula"
+                    onChange={(e) => {
+                      Q(e.target.value);
+                      Pag(0);
+                      seleccionar("");
                     }}
+                  />
+                </div>
+
+                <div className="ve-actions" style={{ marginTop: "0.55rem", flexWrap: "wrap", gap: "0.35rem" }}>
+                  <button
+                    type="button"
+                    onClick={() => setFiltroDir("todos")}
+                    className={filtroDir === "todos" ? "ve-button" : "ve-link"}
+                    style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
+                  >
+                    Todos ({resultado.items.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFiltroDir("hospitalizados")}
+                    className={filtroDir === "hospitalizados" ? "ve-button" : "ve-link"}
+                    style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
                   >
                     Hospitalizados ({pacientesHosp.length})
-                  </div>
-                  {pacientesHosp.map((p) => renderBotonPaciente(p, true))}
-                </>
-              )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFiltroDir("otros")}
+                    className={filtroDir === "otros" ? "ve-button" : "ve-link"}
+                    style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
+                  >
+                    Otros ({pacientesOtros.length})
+                  </button>
+                </div>
 
-              {(filtroDir === "todos" || filtroDir === "otros") && pacientesOtros.length > 0 && (
-                <>
-                  {pacientesHosp.length > 0 && filtroDir === "todos" && (
+                <span role="status" className="ve-meta" style={{ display: "block", marginTop: "0.35rem" }}>
+                  {resultado.carga ? "Buscando…" : resultado.items.length + " en esta página"}
+                </span>
+              </div>
+
+              <div className="ve-patients">
+                {(filtroDir === "todos" || filtroDir === "hospitalizados") && pacientesHosp.length > 0 && (
+                  <>
                     <div
                       style={{
                         padding: "0.35rem 0.85rem",
-                        background: "#f1f5f9",
-                        color: "#475569",
+                        background: "#fef2f2",
+                        color: "#991b1b",
                         fontSize: "0.72rem",
                         fontWeight: 800,
                         letterSpacing: "0.04em",
                         textTransform: "uppercase",
-                        borderTop: "1px solid #e2e8f0",
-                        borderBottom: "1px solid #e2e8f0"
+                        borderTop: "1px solid #fecaca",
+                        borderBottom: "1px solid #fecaca"
                       }}
                     >
-                      Consulta externa / Otros ({pacientesOtros.length})
+                      Hospitalizados ({pacientesHosp.length})
                     </div>
-                  )}
-                  {pacientesOtros.map((p) => renderBotonPaciente(p, false))}
-                </>
-              )}
-            </div>
+                    {pacientesHosp.map((p) => renderBotonPaciente(p, true))}
+                  </>
+                )}
 
-            {resultado.error ? (
-              <div className="ve-empty" role="alert">
-                {resultado.error}
-                <Boton onClick={recargar}>Reintentar</Boton>
+                {(filtroDir === "todos" || filtroDir === "otros") && pacientesOtros.length > 0 && (
+                  <>
+                    {pacientesHosp.length > 0 && filtroDir === "todos" && (
+                      <div
+                        style={{
+                          padding: "0.35rem 0.85rem",
+                          background: "#f1f5f9",
+                          color: "#475569",
+                          fontSize: "0.72rem",
+                          fontWeight: 800,
+                          letterSpacing: "0.04em",
+                          textTransform: "uppercase",
+                          borderTop: "1px solid #e2e8f0",
+                          borderBottom: "1px solid #e2e8f0"
+                        }}
+                      >
+                        Consulta externa / Otros ({pacientesOtros.length})
+                      </div>
+                    )}
+                    {pacientesOtros.map((p) => renderBotonPaciente(p, false))}
+                  </>
+                )}
               </div>
-            ) : (
-              !resultado.carga &&
-              !resultado.items.length && (
-                <div className="ve-empty">
-                  <strong>{q ? "Sin coincidencias" : "Directorio vacío"}</strong>
-                  <span>{q ? "Prueba con otro nombre o cédula." : "Usa Nuevo paciente para abrir la primera ficha."}</span>
+
+              {resultado.error ? (
+                <div className="ve-empty" role="alert">
+                  {resultado.error}
+                  <Boton onClick={recargar}>Reintentar</Boton>
                 </div>
-              )
-            )}
+              ) : (
+                !resultado.carga &&
+                !resultado.items.length && (
+                  <div className="ve-empty">
+                    <strong>{q ? "Sin coincidencias" : "Directorio vacío"}</strong>
+                    <span>{q ? "Prueba con otro nombre o cédula." : "Usa Nuevo paciente para abrir la primera ficha."}</span>
+                  </div>
+                )
+              )}
 
-            {(pag > 0 || resultado.mas) && (
-              <div className="ve-actions ve-pad">
-                {pag > 0 && <Boton onClick={() => Pag((n) => n - 1)}>Anterior</Boton>}
-                {resultado.mas && <Boton onClick={() => Pag((n) => n + 1)}>Siguiente</Boton>}
-              </div>
-            )}
-          </section>
+              {(pag > 0 || resultado.mas) && (
+                <div className="ve-actions ve-pad">
+                  {pag > 0 && <Boton onClick={() => Pag((n) => n - 1)}>Anterior</Boton>}
+                  {resultado.mas && <Boton onClick={() => Pag((n) => n + 1)}>Siguiente</Boton>}
+                </div>
+              )}
+            </section>
+
+            {/* Pestaña / Panel de Banco de Documentos debajo de Pacientes */}
+            <BancoDocumentos
+              pacientesLista={resultado.items}
+              revision={rev}
+              onSeleccionarPaciente={(pacId) => seleccionar(pacId)}
+            />
+          </div>
 
           {id && ficha?.p?.id === id ? (
             <Historia
@@ -2945,6 +3430,11 @@ export default function App() {
               onAltaSuccess={(pid, msg) => {
                 actualizarHospPaciente(pid, { activa: false });
                 A(msg);
+                recargar();
+              }}
+              onPacienteEliminado={(nombreEliminado) => {
+                seleccionar("");
+                A(`Paciente "${nombreEliminado}" y todos sus exámenes fueron eliminados definitivamente.`);
                 recargar();
               }}
             />
