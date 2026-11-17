@@ -1,11 +1,18 @@
 import {fotoGataDemo} from "./foto-demo.mjs";
 
-export const jaulas = ["Infeccioso","Post operatorio","Gatera","Hospitalización 1"];
+export const jaulas = [
+  "Hospital general",
+  "Infectología",
+  "UCI / Cuidados intensivos",
+  "Post-quirúrgico",
+  "Jaulas metálicas",
+  "Jaulas de adopción"
+];
 export const limiteMiniatura = 40 * 1024;
 export const ladoMiniatura = 320;
 export function normalizarJaula(valor) {
   if (valor == null || valor==="") return null;
-  if (!jaulas.includes(valor)) throw new Error("Selecciona una de las cuatro jaulas.");
+  if (!jaulas.includes(valor)) throw new Error("Selecciona una jaula o área válida.");
   return valor;
 }
 
