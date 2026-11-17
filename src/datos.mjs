@@ -174,7 +174,7 @@ function crearRepositorio(config) {
       if (demo) {
         return demoRegistros
           .filter((r) => r.paciente_id === String(pacienteId) && r.modulo === modulo)
-          .map((r) => ({ ...r.datos, id: r.id }));
+          .map((r) => ({ ...r.datos, id: r.id, _parent_id: r.paciente_id }));
       }
 
       const url =
@@ -200,7 +200,7 @@ function crearRepositorio(config) {
       }
 
       const filas = await res.json();
-      return filas.map((f) => ({ ...(f.datos || {}), id: f.id, _creado: f.creado }));
+      return filas.map((f) => ({ ...(f.datos || {}), id: f.id, _parent_id: f.paciente_id, _creado: f.creado }));
     },
 
     async guardar(pacienteId, modulo, item) {
@@ -261,6 +261,42 @@ function crearRepositorio(config) {
         const err = await res.json().catch(() => ({}));
         throw Error(err.message || "No se pudo eliminar el registro de la nube.");
       }
+    }
+  };
+
+  // ==========================================================================
+  // CENTRO DE NOTIFICACIONES GLOBAL (MEDICACIÓN Y TERAPIAS ACTIVAS)
+  // ==========================================================================
+  const notificaciones = {
+    async listarActivas(signal) {
+      let filas = [];
+      if (demo) {
+        filas = demoRegistros
+          .filter((r) => r.modulo === "terapia_hosp" || r.modulo === "med_hosp")
+          .map((r) => ({ id: r.id, paciente_id: r.paciente_id, modulo: r.modulo, datos: r.datos }));
+      } else {
+        const url =
+          `${config.url}/rest/v1/pibe_registros_extra?` +
+          `modulo=in.(terapia_hosp,med_hosp)&order=creado.desc`;
+        const res = await fetch(url, {
+          method: "GET",
+          cache: "no-store",
+          credentials: "omit",
+          signal,
+          headers: headersSupabase
+        });
+        if (!res.ok) return [];
+        filas = await res.json();
+      }
+
+      return filas
+        .map((f) => ({
+          ...(f.datos || {}),
+          id: f.id,
+          admisionId: f.datos?.admisionId || f.paciente_id,
+          modulo: f.modulo
+        }))
+        .filter((it) => it.activa !== false);
     }
   };
 
@@ -485,7 +521,7 @@ function crearRepositorio(config) {
   };
 
   const hospital = crearHospital(rpc, demo, eventos, fechaLocal, pacientes);
-  return { demo, listar, ficha, expediente, guardarPaciente, guardarAtencion, subir, enlace, hospital, fotos, modulos };
+  return { demo, listar, ficha, expediente, guardarPaciente, guardarAtencion, subir, enlace, hospital, fotos, modulos, notificaciones };
 }
 
 export { crearRepositorio, etiquetas, fechaCorta, fechaLocal, hora, edad, uuid };
