@@ -36,12 +36,19 @@ const TIPOS_TERAPIA_HOSP = [
 ];
 
 // ============================================================================
-// UTILIDADES DE CÁLCULO DE HORARIOS PARA NOTIFICACIONES
+// UTILIDADES DE CÁLCULO DE HORARIOS Y ADMINISTRACIÓN DEL DÍA
 // ============================================================================
-function parsearFechaEcuador(str) {
+function parsearFechaEcuador(str, ahoraMs = Date.now()) {
   if (!str) return null;
-  const limpia = String(str).trim().replace(" ", "T");
-  const iso = limpia.length === 16 ? `${limpia}:00-05:00` : limpia;
+  const limpia = String(str).trim();
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(limpia)) {
+    const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
+    const hhmm = limpia.slice(0, 5);
+    const dHora = new Date(`${hoy}T${hhmm}:00-05:00`);
+    return Number.isNaN(dHora.getTime()) ? null : dHora;
+  }
+  const conT = limpia.replace(" ", "T");
+  const iso = conT.length === 16 ? `${conT}:00-05:00` : conT;
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -62,7 +69,7 @@ function parsearIntervaloMinutos(frecuencia) {
   if (/\bbid\b|2\s*veces/.test(txt)) return 720;
   if (/\btid\b|3\s*veces/.test(txt)) return 480;
   if (/\bqid\b|4\s*veces/.test(txt)) return 360;
-  return 720; // Predeterminado 12h si se escribe texto libre
+  return 720;
 }
 
 function formatearTiempoRelativo(minutosAbs) {
@@ -75,16 +82,34 @@ function formatearTiempoRelativo(minutosAbs) {
 
 function calcularEstadoDosis(item, ahoraMs) {
   const intervaloMin = parsearIntervaloMinutos(item.frecuencia);
-  const apps = item.aplicaciones || [];
-  let proximaDate = null;
+  const hoyEC = fechaLocal(new Date(ahoraMs)).slice(0, 10);
 
-  if (apps.length > 0) {
-    const ultima = parsearFechaEcuador(apps[0].fecha);
-    if (ultima) {
-      proximaDate = new Date(ultima.getTime() + intervaloMin * 60000);
-    }
+  const appsParseadas = (item.aplicaciones || [])
+    .map((ap) => {
+      const dt = parsearFechaEcuador(ap.fecha, ahoraMs);
+      return dt
+        ? {
+            ...ap,
+            ts: dt.getTime(),
+            fechaEC: fechaLocal(dt).slice(0, 10),
+            horaEC: hora(dt)
+          }
+        : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.ts - a.ts);
+
+  const administracionesHoy = [...appsParseadas]
+    .filter((ap) => ap.fechaEC === hoyEC)
+    .sort((a, b) => a.ts - b.ts);
+
+  const tomasEsperadasDia = Math.max(1, Math.round(1440 / intervaloMin));
+
+  let proximaDate = null;
+  if (appsParseadas.length > 0) {
+    proximaDate = new Date(appsParseadas[0].ts + intervaloMin * 60000);
   } else {
-    proximaDate = parsearFechaEcuador(item.proximaManual || item.fechaInicio);
+    proximaDate = parsearFechaEcuador(item.proximaManual || item.fechaInicio, ahoraMs);
   }
 
   if (!proximaDate) {
@@ -97,8 +122,11 @@ function calcularEstadoDosis(item, ahoraMs) {
   return {
     proximaDate,
     proximaTexto: fechaLocal(proximaDate).replace("T", " "),
+    proximaHora: hora(proximaDate),
     diffMin,
     urgencia,
+    administracionesHoy,
+    tomasEsperadasDia,
     etiquetaTiempo:
       diffMin < 0
         ? `Atrasado hace ${formatearTiempoRelativo(Math.abs(diffMin))}`
@@ -117,7 +145,7 @@ function SelectorJaula({ valor }) {
 }
 
 // ============================================================================
-// CENTRO DE NOTIFICACIONES DE PRÓXIMOS A MEDICAR
+// CENTRO DE NOTIFICACIONES DE PRÓXIMOS A MEDICAR + ADMINISTRACIÓN DEL DÍA
 // ============================================================================
 function ModalCentroNotificaciones({
   pendientes,
@@ -130,7 +158,6 @@ function ModalCentroNotificaciones({
 }) {
   const dialog = useRef(null);
   const [filtro, setFiltro] = useState("urgentes");
-  const [responsable, setResponsable] = useState("MVZ. Cristhian Romero");
   const [procesandoId, setProcesandoId] = useState("");
 
   useEffect(() => {
@@ -148,7 +175,7 @@ function ModalCentroNotificaciones({
     if (procesandoId) return;
     setProcesandoId(item.id);
     try {
-      await onMedicarAhora(item, responsable.trim() || "Médico de turno");
+      await onMedicarAhora(item);
     } finally {
       setProcesandoId("");
     }
@@ -171,7 +198,7 @@ function ModalCentroNotificaciones({
               <Bell size={19} /> Centro de Notificaciones · Próximos a medicar
             </h2>
             <p className="ve-meta">
-              {urgentes.length} urgente(s) · {pendientes.length} pauta(s) activa(s) en hospitalización
+              {urgentes.length} urgente(s) · {pendientes.length} medicación(es) activa(s)
             </p>
           </div>
           <div className="ve-actions">
@@ -184,68 +211,48 @@ function ModalCentroNotificaciones({
           style={{
             display: "flex",
             flexWrap: "wrap",
-            justifyContent: "space-between",
             alignItems: "center",
-            gap: "0.65rem",
+            gap: "0.45rem",
             marginTop: "0.75rem",
-            padding: "0.65rem",
+            padding: "0.55rem 0.65rem",
             background: "#f8fafc",
             borderRadius: "10px",
             border: "1px solid #e2e8f0"
           }}
         >
-          <div className="ve-actions" style={{ gap: "0.4rem" }}>
-            <button
-              type="button"
-              onClick={() => setFiltro("urgentes")}
-              className={filtro === "urgentes" ? "ve-button" : "ve-link"}
-              style={{ fontSize: "0.8rem", padding: "0.3rem 0.65rem" }}
-            >
-              Urgentes / Próximos ({urgentes.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFiltro("todos")}
-              className={filtro === "todos" ? "ve-button" : "ve-link"}
-              style={{ fontSize: "0.8rem", padding: "0.3rem 0.65rem" }}
-            >
-              Todos activos ({pendientes.length})
-            </button>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: "1 1 240px", maxWidth: "340px" }}>
-            <label style={{ fontSize: "0.78rem", fontWeight: 600, whiteSpace: "nowrap" }}>Medica:</label>
-            <input
-              type="text"
-              value={responsable}
-              onChange={(e) => setResponsable(e.target.value)}
-              placeholder="Nombre de quien aplica"
-              style={{
-                width: "100%",
-                padding: "0.35rem 0.55rem",
-                borderRadius: "7px",
-                border: "1px solid #cbd5e1",
-                fontSize: "0.82rem"
-              }}
-            />
-          </div>
+          <button
+            type="button"
+            onClick={() => setFiltro("urgentes")}
+            className={filtro === "urgentes" ? "ve-button" : "ve-link"}
+            style={{ fontSize: "0.8rem", padding: "0.3rem 0.65rem" }}
+          >
+            Urgentes / Próximos ({urgentes.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltro("todos")}
+            className={filtro === "todos" ? "ve-button" : "ve-link"}
+            style={{ fontSize: "0.8rem", padding: "0.3rem 0.65rem" }}
+          >
+            Todos activos ({pendientes.length})
+          </button>
         </div>
 
-        <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.85rem", maxHeight: "60vh", overflowY: "auto" }}>
+        <div style={{ display: "grid", gap: "0.7rem", marginTop: "0.85rem", maxHeight: "62vh", overflowY: "auto" }}>
           {cargando ? (
-            <p className="ve-sub">Sincronizando horarios de medicación…</p>
+            <p className="ve-sub">Sincronizando medicaciones y administración del día…</p>
           ) : visibles.length === 0 ? (
             <div className="ve-empty" style={{ padding: "1.5rem 1rem" }}>
               <CheckCircle2 size={26} color="#16a34a" />
               <strong>
                 {filtro === "urgentes"
                   ? "No hay pacientes atrasados ni próximos en la siguiente hora"
-                  : "No hay medicaciones o terapias activas programadas"}
+                  : "No hay medicaciones o inyecciones activas programadas"}
               </strong>
               <span>
                 {filtro === "urgentes" && pendientes.length > 0
-                  ? `Tienes ${pendientes.length} pauta(s) programada(s) para más tarde.`
-                  : "Programa medicaciones o terapias dentro de la hoja de hospitalización de un paciente."}
+                  ? `Tienes ${pendientes.length} medicación(es) programada(s) para más tarde. Pulsa "Todos activos" para verlas.`
+                  : "Las inyecciones y pautas agregadas en la Hoja de Hospitalización aparecerán aquí automáticamente."}
               </span>
             </div>
           ) : (
@@ -256,6 +263,7 @@ function ModalCentroNotificaciones({
               const jaulaPac = item.jaula || pacEncontrado?.jaula || "Sin jaula";
               const esAtrasado = item.estado.urgencia === "atrasado";
               const esProximo = item.estado.urgencia === "proximo";
+              const adminHoy = item.estado.administracionesHoy || [];
 
               return (
                 <div
@@ -264,12 +272,12 @@ function ModalCentroNotificaciones({
                     border: `1px solid ${esAtrasado ? "#fca5a5" : esProximo ? "#fcd34d" : "#cbd5e1"}`,
                     borderLeft: `5px solid ${esAtrasado ? "#dc2626" : esProximo ? "#d97706" : "#0284c7"}`,
                     borderRadius: "10px",
-                    padding: "0.75rem",
+                    padding: "0.8rem",
                     background: esAtrasado ? "#fef2f2" : esProximo ? "#fffbeb" : "#fff"
                   }}
                 >
                   <div className="ve-row" style={{ alignItems: "flex-start", gap: "0.5rem" }}>
-                    <div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
                         <span
                           className="ve-badge"
@@ -281,27 +289,67 @@ function ModalCentroNotificaciones({
                         >
                           {item.estado.etiquetaTiempo}
                         </span>
-                        <strong style={{ fontSize: "0.96rem" }}>{nombrePac}</strong>
+                        <strong style={{ fontSize: "0.98rem" }}>{nombrePac}</strong>
                         {especiePac && <span className="ve-meta">({especiePac})</span>}
                         <span className="ve-badge" style={{ background: "#f1f5f9", color: "#334155" }}>
                           {jaulaPac}
                         </span>
                       </div>
 
-                      <p style={{ margin: "0.35rem 0 0.2rem", fontSize: "0.9rem" }}>
+                      <p style={{ margin: "0.4rem 0 0.25rem", fontSize: "0.92rem" }}>
                         <span className="ve-badge" style={{ marginRight: "0.4rem" }}>
                           {item.tipo}
                         </span>
                         <strong>{item.producto}</strong>
-                        {item.dosis ? ` · Dosis/Vía: ${item.dosis}` : ""}
+                        {item.dosis ? ` · ${item.dosis}` : ""}
                       </p>
 
                       <p className="ve-meta">
-                        Frecuencia: <strong>{item.frecuencia}</strong> · Duración: {item.duracion} ·{" "}
-                        {(item.aplicaciones || []).length > 0
-                          ? `Última dosis: ${item.aplicaciones[0].fecha} (${item.aplicaciones[0].medico})`
-                          : `Inicio: ${item.fechaInicio}`}
+                        Frecuencia: <strong>{item.frecuencia}</strong> · Duración: {item.duracion}
                       </p>
+
+                      {/* Bloque explícito de Administración del día */}
+                      <div
+                        style={{
+                          marginTop: "0.5rem",
+                          padding: "0.45rem 0.65rem",
+                          borderRadius: "8px",
+                          background: "rgba(255, 255, 255, 0.85)",
+                          border: "1px solid #e2e8f0",
+                          fontSize: "0.82rem"
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.35rem" }}>
+                          <strong style={{ color: "#0f172a" }}>
+                            Administración del día ({adminHoy.length}/{item.estado.tomasEsperadasDia} hoy)
+                          </strong>
+                          <span className="ve-meta">
+                            Próxima dosis: <strong>{item.estado.proximaHora}</strong>
+                          </span>
+                        </div>
+
+                        {adminHoy.length > 0 ? (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginTop: "0.35rem" }}>
+                            {adminHoy.map((ap) => (
+                              <span
+                                key={ap.id}
+                                className="ve-badge"
+                                style={{
+                                  background: "#dcfce7",
+                                  color: "#166534",
+                                  fontWeight: 600
+                                }}
+                              >
+                                ✓ {ap.horaEC} aplicada
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="ve-meta" style={{ margin: "0.25rem 0 0", color: "#b45309" }}>
+                            Sin dosis aplicadas todavía en el día de hoy.
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="ve-actions" style={{ flexShrink: 0 }}>
@@ -691,7 +739,7 @@ function ModalAltaHospital({ paciente, admision, profesionales, cerrar, onAltaCo
 }
 
 // ============================================================================
-// PANEL DE MEDICACIÓN Y TERAPIAS CON ALERTAS EN HOJA DE HOSPITALIZACIÓN
+// PANEL DE TERAPIAS COMPLEMENTARIAS EN HOJA DE HOSPITALIZACIÓN
 // ============================================================================
 function PanelTerapiasComplementarias({ paciente, admision, profesionales, revision, onCambioNotificaciones }) {
   const admisionId = admision.id;
@@ -809,14 +857,14 @@ function PanelTerapiasComplementarias({ paciente, admision, profesionales, revis
     <section className="ve-panel ve-pad" style={{ marginTop: "1rem" }}>
       <div className="ve-row">
         <h2 style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
-          <Syringe size={18} /> Medicación con alerta, tópicos, curaciones, baños, ozono y nebulizaciones
+          <Syringe size={18} /> Terapias tópicas, curaciones, baños, ozono y nebulizaciones
         </h2>
         <span className="ve-meta">{cargando ? "Sincronizando…" : `${lista.length} registradas`}</span>
       </div>
 
       <form onSubmit={agregarTerapia} className="ve-campos" style={{ marginTop: "0.75rem" }}>
         <div className="ve-field">
-          <label>Tipo de medicación / terapia</label>
+          <label>Tipo de terapia / medicación</label>
           <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
             {TIPOS_TERAPIA_HOSP.map((op) => (
               <option key={op} value={op}>
@@ -832,7 +880,7 @@ function PanelTerapiasComplementarias({ paciente, admision, profesionales, revis
             type="text"
             value={producto}
             onChange={(e) => setProducto(e.target.value)}
-            placeholder="Ej. Ceftriaxona, Meloxicam, Clorhexidina 2%, Nebulización..."
+            placeholder="Ej. Clorhexidina 2%, Nebulización, Pomada..."
             required
           />
         </div>
@@ -848,7 +896,7 @@ function PanelTerapiasComplementarias({ paciente, admision, profesionales, revis
         </div>
 
         <div className="ve-field">
-          <label>Frecuencia (activa la alerta) *</label>
+          <label>Frecuencia *</label>
           <input
             type="text"
             value={frecuencia}
@@ -896,7 +944,7 @@ function PanelTerapiasComplementarias({ paciente, admision, profesionales, revis
 
         <div className="ve-field" style={{ justifyContent: "flex-end" }}>
           <button type="submit" className="ve-button" disabled={guardando}>
-            {guardando ? "Guardando…" : "+ Agregar pauta con alerta"}
+            {guardando ? "Guardando…" : "+ Agregar terapia"}
           </button>
         </div>
       </form>
@@ -983,7 +1031,7 @@ function PanelTerapiasComplementarias({ paciente, admision, profesionales, revis
         </div>
       ) : (
         <p className="ve-sub" style={{ marginTop: "0.75rem" }}>
-          Sin medicaciones o terapias complementarias registradas en este ingreso.
+          Sin terapias complementarias registradas en este ingreso.
         </p>
       )}
     </section>
@@ -1478,7 +1526,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                     )}
                   </div>
 
-                  {/* Materiales e hilos de sutura: Lista en lote + Internista + "Guardar y subir" */}
+                  {/* Materiales e hilos de sutura */}
                   <div style={{ marginTop: "0.75rem", padding: "0.75rem", border: "1px solid #cbd5e1", borderRadius: "10px", background: "#fcfdfe" }}>
                     <strong style={{ fontSize: "0.88rem", display: "block", marginBottom: "0.5rem" }}>
                       Registro de materiales e hilos de sutura utilizados
@@ -2253,8 +2301,14 @@ function Historia({
           repo={repo.hospital}
           fotos={repo.fotos}
           editarFoto={editarFoto}
-          actualizarFicha={recargar}
-          volver={() => verIngreso("")}
+          actualizarFicha={() => {
+            recargar();
+            if (onCambioNotificaciones) onCambioNotificaciones();
+          }}
+          volver={() => {
+            verIngreso("");
+            if (onCambioNotificaciones) onCambioNotificaciones();
+          }}
           editar={() => formulario(admision)}
           revision={revision}
         />
@@ -2573,7 +2627,7 @@ export default function App() {
     });
   }, []);
 
-  // Cargar notificaciones globales de pacientes próximos a medicar
+  // Cargar notificaciones globales (Hoja de Hospitalización + Terapias)
   const cargarNotificaciones = useCallback(async (signal) => {
     setCargaNotif(true);
     try {
@@ -2592,10 +2646,9 @@ export default function App() {
     return () => ac.abort();
   }, [cargarNotificaciones, rev]);
 
-  // Actualizar reloj cada 30 segundos y recargar nube cada 2 minutos
   useEffect(() => {
     const tReloj = setInterval(() => setRelojTick(Date.now()), 30000);
-    const tSync = setInterval(() => cargarNotificaciones(), 120000);
+    const tSync = setInterval(() => cargarNotificaciones(), 90000);
     return () => {
       clearInterval(tReloj);
       clearInterval(tSync);
@@ -2705,19 +2758,17 @@ export default function App() {
     recargar();
   }
 
-  async function medicarDesdeNotificacion(item, nombreMedico) {
-    const ahora = fechaLocal(new Date()).replace("T", " ");
-    const actualizada = {
-      ...item,
-      aplicaciones: [{ id: uuid(), fecha: ahora, medico: nombreMedico }, ...(item.aplicaciones || [])]
-    };
-    await repo.modulos.guardar(item.admisionId, item.modulo || "terapia_hosp", actualizada);
-    setPautasActivas((prev) => prev.map((p) => (p.id === item.id ? actualizada : p)));
-    A(`Medicación aplicada a ${item.pacienteNombre || "paciente"} (${item.producto}) por ${nombreMedico}.`);
+  async function medicarDesdeNotificacion(item) {
+    const nuevoReg = await repo.notificaciones.registrarAplicacion(item);
+    setPautasActivas((prev) =>
+      prev.map((p) =>
+        p.id === item.id ? { ...p, aplicaciones: [nuevoReg, ...(p.aplicaciones || [])] } : p
+      )
+    );
+    A(`Administración registrada: ${item.pacienteNombre || "Paciente"} · ${item.producto} (${nuevoReg.fecha.slice(11)}).`);
     recargar();
   }
 
-  // Calcular y ordenar pendientes de medicación por urgencia
   const pendientesOrdenados = pautasActivas
     .map((item) => ({
       ...item,
@@ -2778,7 +2829,10 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: "0.55rem" }}>
             <button
               type="button"
-              onClick={() => setAbrirNotif(true)}
+              onClick={() => {
+                setAbrirNotif(true);
+                cargarNotificaciones();
+              }}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -2815,7 +2869,6 @@ export default function App() {
       </header>
 
       <main className="ve-container">
-        {/* Franja de alerta inmediata si hay pacientes atrasados o próximos en menos de 1h */}
         {urgentesCount > 0 && (
           <div
             role="status"
@@ -2848,7 +2901,13 @@ export default function App() {
                   .join(" | ")}
               </span>
             </div>
-            <Boton principal onClick={() => setAbrirNotif(true)}>
+            <Boton
+              principal
+              onClick={() => {
+                setAbrirNotif(true);
+                cargarNotificaciones();
+              }}
+            >
               Abrir notificaciones ({urgentesCount})
             </Boton>
           </div>
