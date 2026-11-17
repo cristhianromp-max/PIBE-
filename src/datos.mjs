@@ -591,7 +591,7 @@ function crearRepositorio(config) {
   };
 
   // ==========================================================================
-  // DIRECTORIO CON DETECCIÓN INMEDIATA DE HOSPITALIZADOS
+  // DIRECTORIO CON DETECCIÓN INMEDIATA DE HOSPITALIZADOS Y FOTOS DE DRIVE
   // ==========================================================================
   async function listar(q = "", pagina = 0, signal) {
     if (demo) {
@@ -602,8 +602,10 @@ function crearRepositorio(config) {
 
       const items = filas.slice(pagina * 30, pagina * 30 + 30).map((p) => {
         const activa = eventos.find((e) => e.paciente_id === p.id && e.tipo === "hospitalizacion" && e.abierta);
+        const fotoReg = demoRegistros.find((r) => r.paciente_id === String(p.id) && r.modulo === "drive_foto");
         return {
           ...p,
+          foto_id: fotoReg?.datos?.foto_id || p.foto_id || null,
           hospitalizado: Boolean(activa),
           abierta: Boolean(activa),
           jaula: activa?.jaula || p.jaula || ""
@@ -612,13 +614,36 @@ function crearRepositorio(config) {
       return { items, mas: filas.length > pagina * 30 + 30 };
     }
 
-    const filas = await rpc("pibe_directorio_identificado", { termino: q, cantidad: 31, desplazamiento: pagina * 30 }, signal);
+    const [filas, resFotos] = await Promise.all([
+      rpc("pibe_directorio_identificado", { termino: q, cantidad: 31, desplazamiento: pagina * 30 }, signal),
+      fetch(`${config.url}/rest/v1/pibe_registros_extra?modulo=eq.drive_foto&select=paciente_id,datos`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "omit",
+        signal,
+        headers: headersSupabase
+      }).catch(() => null)
+    ]);
+
+    const mapaFotosDrive = new Map();
+    if (resFotos && resFotos.ok) {
+      const filasFotos = await resFotos.json().catch(() => []);
+      for (const ff of filasFotos) {
+        if (ff.paciente_id && ff.datos?.foto_id) {
+          mapaFotosDrive.set(String(ff.paciente_id), ff.datos.foto_id);
+        }
+      }
+    }
+
     const baseItems = filas.slice(0, 30);
 
     const items = await Promise.all(
       baseItems.map(async (p) => {
-        if (p.hospitalizado || p.abierta || p.ingreso_activo) {
-          return { ...p, hospitalizado: true, abierta: true };
+        const fotoDrive = mapaFotosDrive.get(String(p.id));
+        const conFoto = fotoDrive ? { ...p, foto_id: fotoDrive } : p;
+
+        if (conFoto.hospitalizado || conFoto.abierta || conFoto.ingreso_activo) {
+          return { ...conFoto, hospitalizado: true, abierta: true };
         }
         try {
           const evs = await rpc(
@@ -630,13 +655,13 @@ function crearRepositorio(config) {
             ? evs.find((e) => e.tipo === "hospitalizacion" && e.abierta)
             : null;
           return {
-            ...p,
+            ...conFoto,
             hospitalizado: Boolean(activa),
             abierta: Boolean(activa),
-            jaula: activa?.jaula || p.jaula || ""
+            jaula: activa?.jaula || conFoto.jaula || ""
           };
         } catch {
-          return p;
+          return conFoto;
         }
       })
     );
