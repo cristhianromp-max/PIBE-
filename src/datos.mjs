@@ -2,7 +2,6 @@ import { crearFotos, normalizarJaula } from "./identificacion.mjs";
 import { crearHospital } from "./hospital.mjs";
 
 const DRIVE_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbwdVKvZZ6d_YTIE8u7oEuFhK9tu1WGDxzDIwdP0lTxDRZFtLX29MP-p_YcKkvRj_ZFt/exec";
-const STORE_FALLBACK_MODULOS = "elpibe_cloud_fallback_v1";
 
 const etiquetas = { consulta: "Consulta", control: "Control", hospitalizacion: "Hospitalización", preventivo: "Preventivo" };
 const limpiar = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -56,21 +55,6 @@ function fallo(m, c) {
   const e = new Error(m);
   e.codigo = c;
   return e;
-}
-
-function leerFallback() {
-  try {
-    const raw = localStorage.getItem(STORE_FALLBACK_MODULOS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function guardarFallback(lista) {
-  try {
-    localStorage.setItem(STORE_FALLBACK_MODULOS, JSON.stringify(lista));
-  } catch {}
 }
 
 function archivoABase64(file) {
@@ -147,6 +131,8 @@ function crearRepositorio(config) {
     version: 1
   }));
 
+  const demoRegistros = [];
+
   async function rpc(nombre, datos, signal, rango) {
     const r = await fetch(config.url + "/rest/v1/rpc/" + nombre, {
       method: "POST",
@@ -176,33 +162,43 @@ function crearRepositorio(config) {
   }
 
   // ==========================================================================
-  // ALMACENAMIENTO COMPARTIDO EN SUPABASE (pibe_registros_extra)
+  // SINCRONIZACIÓN MULTIDISPOSITIVO EN SUPABASE (pibe_registros_extra)
   // ==========================================================================
-  const headersRest = {
+  const headersSupabase = {
     "Content-Type": "application/json",
-    apikey: config.clave,
-    Authorization: "Bearer " + config.clave
+    apikey: config.clave
   };
 
   const modulos = {
     async listar(pacienteId, modulo, signal) {
       if (demo) {
-        return leerFallback()
+        return demoRegistros
           .filter((r) => r.paciente_id === String(pacienteId) && r.modulo === modulo)
           .map((r) => ({ ...r.datos, id: r.id }));
       }
+
       const url =
         `${config.url}/rest/v1/pibe_registros_extra?` +
-        `paciente_id=eq.${encodeURIComponent(pacienteId)}&modulo=eq.${encodeURIComponent(modulo)}&order=creado.desc`;
-      const res = await fetch(url, { method: "GET", cache: "no-store", signal, headers: headersRest });
+        `paciente_id=eq.${encodeURIComponent(String(pacienteId))}` +
+        `&modulo=eq.${encodeURIComponent(modulo)}` +
+        `&order=creado.desc`;
+
+      const res = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "omit",
+        signal,
+        headers: headersSupabase
+      });
+
       if (!res.ok) {
-        if (res.status === 404) {
-          return leerFallback()
-            .filter((r) => r.paciente_id === String(pacienteId) && r.modulo === modulo)
-            .map((r) => ({ ...r.datos, id: r.id }));
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 404 || err.code === "42P01" || err.code === "PGRST205") {
+          throw Error("Falta crear la tabla pibe_registros_extra en Supabase SQL Editor.");
         }
-        throw Error("No se pudieron cargar los registros compartidos.");
+        throw Error(err.message || `Error ${res.status} al leer registros compartidos.`);
       }
+
       const filas = await res.json();
       return filas.map((f) => ({ ...(f.datos || {}), id: f.id, _creado: f.creado }));
     },
@@ -219,47 +215,52 @@ function crearRepositorio(config) {
       };
 
       if (demo) {
-        const prev = leerFallback().filter((r) => r.id !== idReg);
-        guardarFallback([fila, ...prev]);
+        const idx = demoRegistros.findIndex((r) => r.id === idReg);
+        if (idx >= 0) demoRegistros[idx] = fila;
+        else demoRegistros.unshift(fila);
         return registroCompleto;
       }
 
       const res = await fetch(`${config.url}/rest/v1/pibe_registros_extra?on_conflict=id`, {
         method: "POST",
         cache: "no-store",
+        credentials: "omit",
         headers: {
-          ...headersRest,
+          ...headersSupabase,
           Prefer: "resolution=merge-duplicates,return=representation"
         },
         body: JSON.stringify(fila)
       });
 
       if (!res.ok) {
-        if (res.status === 404) {
-          const prev = leerFallback().filter((r) => r.id !== idReg);
-          guardarFallback([fila, ...prev]);
-          return registroCompleto;
-        }
         const err = await res.json().catch(() => ({}));
-        throw Error(err.message || "No se pudo guardar en la nube.");
+        if (res.status === 404 || err.code === "42P01" || err.code === "PGRST205") {
+          throw Error("Falta crear la tabla pibe_registros_extra en Supabase SQL Editor.");
+        }
+        throw Error(err.message || `Error ${res.status} al guardar en la nube.`);
       }
+
       return registroCompleto;
     },
 
     async eliminar(idReg) {
       if (demo) {
-        guardarFallback(leerFallback().filter((r) => r.id !== idReg));
+        const idx = demoRegistros.findIndex((r) => r.id === idReg);
+        if (idx >= 0) demoRegistros.splice(idx, 1);
         return;
       }
-      const res = await fetch(`${config.url}/rest/v1/pibe_registros_extra?id=eq.${encodeURIComponent(idReg)}`, {
+
+      const res = await fetch(`${config.url}/rest/v1/pibe_registros_extra?id=eq.${encodeURIComponent(String(idReg))}`, {
         method: "DELETE",
         cache: "no-store",
-        headers: headersRest
+        credentials: "omit",
+        headers: headersSupabase
       });
-      if (!res.ok && res.status !== 404) {
-        throw Error("No se pudo eliminar el registro de la nube.");
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw Error(err.message || "No se pudo eliminar el registro de la nube.");
       }
-      guardarFallback(leerFallback().filter((r) => r.id !== idReg));
     }
   };
 
@@ -418,7 +419,6 @@ function crearRepositorio(config) {
     return archivo;
   }
 
-  // Sube el archivo a Google Drive y guarda el enlace compartido en Supabase
   async function subir(id, visita, archivo, categoria) {
     const f = await preparar(archivo, categoria);
     const carpeta = categoria === "foto" ? "Seguimiento_Clinico" : "Examenes_Clinicos";
