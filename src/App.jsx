@@ -1724,7 +1724,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
 }
 
 // ============================================================================
-// PESTAÑA DE COTIZACIONES (CON LINK CONTÍFICO Y ESTADO PENDIENTE / COBRADO)
+// PESTAÑA DE COTIZACIONES (AGRUPADA, CON SALDO PENDIENTE Y MODAL DE DETALLE)
 // ============================================================================
 function crearFilasCotizacion() {
   return [
@@ -1738,6 +1738,140 @@ function normalizarEnlacePrefactura(url) {
   const limpio = String(url || "").trim();
   if (!limpio) return "";
   return /^https?:\/\//i.test(limpio) ? limpio : `https://${limpio}`;
+}
+
+function ModalDetalleCotizacion({ grupo, cerrar, onEliminarItem }) {
+  const dialog = useRef(null);
+
+  useEffect(() => {
+    const el = dialog.current;
+    if (el && !el.open) el.showModal();
+    return () => {
+      if (el?.open) el.close();
+    };
+  }, []);
+
+  if (!grupo) return null;
+
+  const esCobrado = grupo.estadoCobro === "cobrado";
+  const saldo = Number(grupo.saldoPendiente) || 0;
+
+  return (
+    <dialog
+      className="ve-dialog ve-dialog-clinico"
+      ref={dialog}
+      onCancel={(e) => {
+        e.preventDefault();
+        cerrar();
+      }}
+      aria-labelledby="titulo-detalle-cot"
+    >
+      <div>
+        <div className="ve-row" style={{ alignItems: "flex-start", gap: "0.75rem" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+              <h2 id="titulo-detalle-cot" style={{ margin: 0 }}>
+                Cotización #{grupo.numeroCotizacion}
+              </h2>
+              <span
+                className="ve-badge"
+                style={{
+                  background: esCobrado ? "#dcfce7" : "#fee2e2",
+                  color: esCobrado ? "#166534" : "#991b1b",
+                  fontWeight: 700
+                }}
+              >
+                {esCobrado ? "Cobrado" : "Pendiente"}
+              </span>
+              {saldo > 0 && (
+                <span
+                  className="ve-badge"
+                  style={{
+                    background: "#fef3c7",
+                    color: "#92400e",
+                    fontWeight: 700
+                  }}
+                >
+                  Falta por pagar: ${saldo.toFixed(2)}
+                </span>
+              )}
+            </div>
+            <p className="ve-meta" style={{ marginTop: "0.3rem" }}>
+              {grupo.items.length} ítem(s) · Fecha: {grupo.fecha} · Internista(s): {grupo.internistas || "Sin registrar"}
+            </p>
+          </div>
+
+          <div className="ve-actions">
+            {grupo.linkPrefactura && (
+              <a
+                href={grupo.linkPrefactura}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ve-button"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.35rem",
+                  textDecoration: "none",
+                  fontSize: "0.82rem"
+                }}
+              >
+                <ExternalLink size={14} /> Abrir en Contífico
+              </a>
+            )}
+            <Boton icono={X} aria-label="Cerrar" onClick={cerrar} />
+          </div>
+        </div>
+
+        <div style={{ overflowX: "auto", marginTop: "0.9rem", maxHeight: "58vh", overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.86rem" }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0", background: "#f8fafc", color: "#334155" }}>
+                <th style={{ padding: "0.5rem 0.4rem" }}>Fecha / Hora</th>
+                <th style={{ padding: "0.5rem 0.4rem" }}>Categoría</th>
+                <th style={{ padding: "0.5rem 0.4rem" }}>Producto / Medicina / Insumo</th>
+                <th style={{ padding: "0.5rem 0.4rem" }}>Cantidad</th>
+                <th style={{ padding: "0.5rem 0.4rem" }}>Internista</th>
+                <th style={{ width: "36px" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {grupo.items.map((it) => (
+                <tr key={it.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "0.5rem 0.4rem", whiteSpace: "nowrap" }}>
+                    {it.fecha} <span className="ve-meta">{it.horaRegistro}</span>
+                  </td>
+                  <td style={{ padding: "0.5rem 0.4rem" }}>
+                    <span className="ve-badge">{it.tipoItem}</span>
+                  </td>
+                  <td style={{ padding: "0.5rem 0.4rem" }}>
+                    <strong>{it.descripcion}</strong>
+                    {it.nota && <div className="ve-meta">{it.nota}</div>}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.4rem", fontWeight: 700 }}>{it.cantidad}</td>
+                  <td style={{ padding: "0.5rem 0.4rem" }}>{it.internista}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <button
+                      type="button"
+                      onClick={() => onEliminarItem(it.id)}
+                      className="ve-link"
+                      title="Eliminar ítem de la cotización"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <footer className="ve-actions ve-last">
+          <Boton onClick={cerrar}>Cerrar</Boton>
+        </footer>
+      </div>
+    </dialog>
+  );
 }
 
 function PestanaCotizaciones({ paciente, profesionales, revision }) {
@@ -1754,15 +1888,17 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
   const [avisoCot, setAvisoCot] = useState("");
   const [errorCot, setErrorCot] = useState("");
 
-  const [cambiosEstado, setCambiosEstado] = useState({});
+  // Cambios pendientes por N.º de cotización: { [numCot]: { estadoCobro?: string, saldoPendiente?: string } }
+  const [cambiosCotizacion, setCambiosCotizacion] = useState({});
   const [guardandoEstados, setGuardandoEstados] = useState(false);
+  const [cotizacionDetalleNum, setCotizacionDetalleNum] = useState("");
 
   const cargarCotizaciones = useCallback(async (signal) => {
     setCargando(true);
     try {
       const items = await repo.modulos.listar(paciente.id, "cotizacion", signal);
       setLista(items);
-      setCambiosEstado({});
+      setCambiosCotizacion({});
       if (items[0]?.numeroCotizacion) {
         setNumeroCot((prev) => prev || items[0].numeroCotizacion);
       }
@@ -1804,14 +1940,21 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
     setGuardando(true);
     setErrorCot("");
     try {
+      const numLimpio = numeroCot.trim();
       const horaActual = hora(new Date());
-      const enlaceNormalizado = normalizarEnlacePrefactura(linkPrefactura);
+      const existentes = lista.filter((it) => String(it.numeroCotizacion || "").trim() === numLimpio);
+      const enlaceNormalizado =
+        normalizarEnlacePrefactura(linkPrefactura) ||
+        existentes.find((it) => it.linkPrefactura)?.linkPrefactura ||
+        "";
+      const estadoHeredado = existentes[0]?.estadoCobro || "pendiente";
+      const saldoHeredado = Number(existentes.find((it) => it.saldoPendiente != null)?.saldoPendiente) || 0;
 
       const nuevosRegistros = await Promise.all(
         filasValidas.map((f) =>
           repo.modulos.guardar(paciente.id, "cotizacion", {
             id: uuid(),
-            numeroCotizacion: numeroCot.trim(),
+            numeroCotizacion: numLimpio,
             linkPrefactura: enlaceNormalizado,
             internista: internista.trim(),
             fecha,
@@ -1820,7 +1963,8 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
             cantidad: f.cantidad.trim(),
             nota: f.nota.trim(),
             horaRegistro: horaActual,
-            estadoCobro: "pendiente"
+            estadoCobro: estadoHeredado,
+            saldoPendiente: saldoHeredado
           })
         )
       );
@@ -1828,7 +1972,7 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
       setLista((prev) => [...nuevosRegistros, ...prev]);
       setFilasTabla(crearFilasCotizacion());
       setLinkPrefactura("");
-      setAvisoCot(`Se guardaron en la nube ${nuevosRegistros.length} ítem(s) en la cotización #${numeroCot.trim()}.`);
+      setAvisoCot(`Se guardaron en la nube ${nuevosRegistros.length} ítem(s) en la cotización #${numLimpio}.`);
       setTimeout(() => setAvisoCot(""), 4000);
     } catch (err) {
       setErrorCot(err.message || "No se pudo guardar la cotización.");
@@ -1837,44 +1981,110 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
     }
   }
 
-  function seleccionarEstadoCobro(item, nuevoEstado) {
-    const estadoGuardado = item.estadoCobro || "pendiente";
-    setCambiosEstado((prev) => {
+  // Agrupar ítems por número de cotización
+  const gruposCotizaciones = (() => {
+    const mapa = new Map();
+    for (const it of lista) {
+      const num = String(it.numeroCotizacion || "Sin número").trim();
+      if (!mapa.has(num)) {
+        mapa.set(num, {
+          numeroCotizacion: num,
+          items: [],
+          linkPrefactura: "",
+          estadoCobro: it.estadoCobro || "pendiente",
+          saldoPendiente: 0,
+          tieneSaldoRegistrado: false
+        });
+      }
+      const g = mapa.get(num);
+      g.items.push(it);
+      if (!g.linkPrefactura && it.linkPrefactura) {
+        g.linkPrefactura = it.linkPrefactura;
+      }
+      if (!g.tieneSaldoRegistrado && it.saldoPendiente !== undefined && it.saldoPendiente !== null) {
+        g.saldoPendiente = Number(it.saldoPendiente) || 0;
+        g.tieneSaldoRegistrado = true;
+      }
+    }
+
+    return Array.from(mapa.values()).map((g) => {
+      const fechasUnicas = [...new Set(g.items.map((i) => i.fecha).filter(Boolean))];
+      const internistasUnicos = [...new Set(g.items.map((i) => i.internista).filter(Boolean))];
+      return {
+        ...g,
+        fecha: fechasUnicas.length <= 1 ? fechasUnicas[0] || "" : `${fechasUnicas[fechasUnicas.length - 1]} – ${fechasUnicas[0]}`,
+        internistas: internistasUnicos.join(", ")
+      };
+    });
+  })();
+
+  function actualizarDraftGrupo(grupo, campo, valor) {
+    const num = grupo.numeroCotizacion;
+    const estadoGuardado = grupo.estadoCobro || "pendiente";
+    const saldoGuardadoNum = Number(grupo.saldoPendiente) || 0;
+
+    setCambiosCotizacion((prev) => {
+      const actual = prev[num] || {};
+      const siguiente = { ...actual, [campo]: valor };
+
+      const estadoFinal = siguiente.estadoCobro ?? estadoGuardado;
+      const saldoFinalStr =
+        siguiente.saldoPendiente !== undefined
+          ? siguiente.saldoPendiente
+          : saldoGuardadoNum > 0
+          ? String(saldoGuardadoNum)
+          : "";
+      const saldoFinalNum = Math.max(0, parseFloat(saldoFinalStr) || 0);
+
+      const sinCambios = estadoFinal === estadoGuardado && Math.abs(saldoFinalNum - saldoGuardadoNum) < 0.001;
       const copia = { ...prev };
-      if (nuevoEstado === estadoGuardado) {
-        delete copia[item.id];
+      if (sinCambios) {
+        delete copia[num];
       } else {
-        copia[item.id] = nuevoEstado;
+        copia[num] = siguiente;
       }
       return copia;
     });
   }
 
-  async function guardarCambiosEstado() {
-    const idsModificados = Object.keys(cambiosEstado);
-    if (idsModificados.length === 0 || guardandoEstados) return;
+  async function guardarCambiosCotizaciones() {
+    const numerosModificados = Object.keys(cambiosCotizacion);
+    if (numerosModificados.length === 0 || guardandoEstados) return;
 
     setGuardandoEstados(true);
     setErrorCot("");
     try {
-      const actualizados = await Promise.all(
-        idsModificados.map((itemId) => {
-          const original = lista.find((it) => it.id === itemId);
-          if (!original) return null;
-          return repo.modulos.guardar(paciente.id, "cotizacion", {
-            ...original,
-            estadoCobro: cambiosEstado[itemId]
-          });
-        })
-      );
+      const actualizaciones = [];
 
-      const mapaActualizados = new Map(actualizados.filter(Boolean).map((it) => [it.id, it]));
+      for (const num of numerosModificados) {
+        const grupo = gruposCotizaciones.find((g) => g.numeroCotizacion === num);
+        if (!grupo) continue;
+        const draft = cambiosCotizacion[num];
+        const nuevoEstado = draft.estadoCobro ?? grupo.estadoCobro ?? "pendiente";
+        const nuevoSaldo =
+          draft.saldoPendiente !== undefined
+            ? Math.max(0, parseFloat(draft.saldoPendiente) || 0)
+            : Number(grupo.saldoPendiente) || 0;
+
+        for (const item of grupo.items) {
+          actualizaciones.push(
+            repo.modulos.guardar(paciente.id, "cotizacion", {
+              ...item,
+              estadoCobro: nuevoEstado,
+              saldoPendiente: nuevoSaldo
+            })
+          );
+        }
+      }
+
+      const itemsGuardados = await Promise.all(actualizaciones);
+      const mapaActualizados = new Map(itemsGuardados.map((it) => [it.id, it]));
       setLista((prev) => prev.map((it) => mapaActualizados.get(it.id) || it));
-      setCambiosEstado({});
-      setAvisoCot(`Estado de cobro actualizado (${idsModificados.length} registro(s)).`);
+      setCambiosCotizacion({});
+      setAvisoCot(`Cambios guardados en ${numerosModificados.length} cotización(es).`);
       setTimeout(() => setAvisoCot(""), 4000);
     } catch (err) {
-      setErrorCot(err.message || "No se pudieron guardar los cambios de estado.");
+      setErrorCot(err.message || "No se pudieron guardar los cambios.");
     } finally {
       setGuardandoEstados(false);
     }
@@ -1883,27 +2093,28 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
   async function eliminarItem(itemId) {
     try {
       await repo.modulos.eliminar(itemId);
-      setLista((prev) => prev.filter((it) => it.id !== itemId));
-      setCambiosEstado((prev) => {
-        const copia = { ...prev };
-        delete copia[itemId];
-        return copia;
+      setLista((prev) => {
+        const nuevaLista = prev.filter((it) => it.id !== itemId);
+        if (
+          cotizacionDetalleNum &&
+          !nuevaLista.some((it) => String(it.numeroCotizacion || "Sin número").trim() === cotizacionDetalleNum)
+        ) {
+          setCotizacionDetalleNum("");
+        }
+        return nuevaLista;
       });
     } catch (err) {
       setErrorCot(err.message);
     }
   }
 
-  const enlacesPorCotizacion = {};
-  for (const it of lista) {
-    if (it.numeroCotizacion && it.linkPrefactura && !enlacesPorCotizacion[it.numeroCotizacion]) {
-      enlacesPorCotizacion[it.numeroCotizacion] = it.linkPrefactura;
-    }
-  }
-
-  const numerosUnicos = [...new Set(lista.map((it) => it.numeroCotizacion))];
-  const filtrados = filtroCot === "TODAS" ? lista : lista.filter((it) => it.numeroCotizacion === filtroCot);
-  const cantidadCambios = Object.keys(cambiosEstado).length;
+  const numerosUnicos = gruposCotizaciones.map((g) => g.numeroCotizacion);
+  const gruposFiltrados =
+    filtroCot === "TODAS"
+      ? gruposCotizaciones
+      : gruposCotizaciones.filter((g) => g.numeroCotizacion === filtroCot);
+  const cantidadCambios = Object.keys(cambiosCotizacion).length;
+  const grupoModalActivo = gruposCotizaciones.find((g) => g.numeroCotizacion === cotizacionDetalleNum) || null;
 
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
@@ -2056,7 +2267,13 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
 
       <section className="ve-panel ve-pad">
         <div className="ve-row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-          <h2>Historial de Cotizaciones e Insumos ({filtrados.length})</h2>
+          <div>
+            <h2 style={{ margin: 0 }}>Historial de Cotizaciones ({gruposFiltrados.length})</h2>
+            <p className="ve-meta" style={{ margin: "0.2rem 0 0" }}>
+              Haz clic en una cotización para ver el detalle completo de sus productos e insumos.
+            </p>
+          </div>
+
           <div className="ve-actions" style={{ flexWrap: "wrap" }}>
             {numerosUnicos.length > 0 && (
               <select
@@ -2077,7 +2294,7 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
             <button
               type="button"
               className="ve-button"
-              onClick={guardarCambiosEstado}
+              onClick={guardarCambiosCotizaciones}
               disabled={cantidadCambios === 0 || guardandoEstados}
               style={{
                 opacity: cantidadCambios === 0 ? 0.55 : 1,
@@ -2095,7 +2312,7 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
 
         {cargando ? (
           <p className="ve-sub">Cargando cotizaciones…</p>
-        ) : filtrados.length === 0 ? (
+        ) : gruposFiltrados.length === 0 ? (
           <p className="ve-sub">Aún no se han cargado insumos o medicinas en cotizaciones para {paciente.nombre}.</p>
         ) : (
           <div style={{ overflowX: "auto", marginTop: "0.75rem" }}>
@@ -2104,47 +2321,74 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
                 <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#334155" }}>
                   <th style={{ padding: "0.5rem 0.35rem" }}>N.º Cotización</th>
                   <th style={{ padding: "0.5rem 0.35rem" }}>Fecha</th>
-                  <th style={{ padding: "0.5rem 0.35rem" }}>Tipo</th>
-                  <th style={{ padding: "0.5rem 0.35rem" }}>Material / Medicina / Insumo</th>
-                  <th style={{ padding: "0.5rem 0.35rem" }}>Cantidad</th>
-                  <th style={{ padding: "0.5rem 0.35rem" }}>Internista</th>
+                  <th style={{ padding: "0.5rem 0.35rem" }}>Resumen de productos / insumos</th>
                   <th style={{ padding: "0.5rem 0.35rem" }}>Estado</th>
-                  <th style={{ width: "68px" }}></th>
+                  <th style={{ padding: "0.5rem 0.35rem", width: "155px" }}>Valor pendiente ($)</th>
+                  <th style={{ padding: "0.5rem 0.35rem", textAlign: "right" }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
-                {filtrados.map((it) => {
-                  const estadoActual = cambiosEstado[it.id] ?? it.estadoCobro ?? "pendiente";
-                  const tieneCambio = cambiosEstado[it.id] !== undefined;
+                {gruposFiltrados.map((grupo) => {
+                  const num = grupo.numeroCotizacion;
+                  const draft = cambiosCotizacion[num];
+                  const tieneCambio = draft !== undefined;
+                  const estadoActual = draft?.estadoCobro ?? grupo.estadoCobro ?? "pendiente";
                   const esCobrado = estadoActual === "cobrado";
-                  const urlPrefactura = it.linkPrefactura || enlacesPorCotizacion[it.numeroCotizacion] || "";
+                  const valorSaldoInput =
+                    draft?.saldoPendiente !== undefined
+                      ? draft.saldoPendiente
+                      : grupo.saldoPendiente > 0
+                      ? String(grupo.saldoPendiente)
+                      : "";
+
+                  const vistaPrevia = grupo.items
+                    .slice(0, 3)
+                    .map((i) => `${i.descripcion} (${i.cantidad})`)
+                    .join(" · ");
 
                   return (
                     <tr
-                      key={it.id}
+                      key={num}
+                      onClick={() => setCotizacionDetalleNum(num)}
+                      title="Haz clic para abrir el detalle de esta cotización"
                       style={{
                         borderBottom: "1px solid #f1f5f9",
-                        background: tieneCambio ? "#fefce8" : "transparent"
+                        background: tieneCambio ? "#fefce8" : "transparent",
+                        cursor: "pointer"
                       }}
                     >
-                      <td style={{ padding: "0.5rem 0.35rem" }}>
-                        <span className="ve-badge">#{it.numeroCotizacion}</span>
+                      <td style={{ padding: "0.6rem 0.35rem", whiteSpace: "nowrap" }}>
+                        <span className="ve-badge" style={{ fontWeight: 700 }}>
+                          #{num}
+                        </span>
+                        <div className="ve-meta" style={{ marginTop: "0.2rem" }}>
+                          {grupo.items.length} ítem(s)
+                        </div>
                       </td>
-                      <td style={{ padding: "0.5rem 0.35rem" }}>
-                        {it.fecha} <span className="ve-meta">{it.horaRegistro}</span>
+
+                      <td style={{ padding: "0.6rem 0.35rem" }}>
+                        <div>{grupo.fecha}</div>
+                        <div className="ve-meta">{grupo.internistas}</div>
                       </td>
-                      <td style={{ padding: "0.5rem 0.35rem" }}>{it.tipoItem}</td>
-                      <td style={{ padding: "0.5rem 0.35rem" }}>
-                        <strong>{it.descripcion}</strong>
-                        {it.nota && <div className="ve-meta">{it.nota}</div>}
+
+                      <td style={{ padding: "0.6rem 0.35rem" }}>
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                          {vistaPrevia}
+                          {grupo.items.length > 3 ? ` (+${grupo.items.length - 3} más)` : ""}
+                        </div>
+                        <span className="ve-link" style={{ fontSize: "0.78rem", padding: 0 }}>
+                          Clic para ver detalle completo →
+                        </span>
                       </td>
-                      <td style={{ padding: "0.5rem 0.35rem", fontWeight: 700 }}>{it.cantidad}</td>
-                      <td style={{ padding: "0.5rem 0.35rem" }}>{it.internista}</td>
-                      <td style={{ padding: "0.5rem 0.35rem" }}>
+
+                      <td
+                        style={{ padding: "0.6rem 0.35rem" }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div style={{ display: "inline-flex", gap: "0.25rem", alignItems: "center" }}>
                           <button
                             type="button"
-                            onClick={() => seleccionarEstadoCobro(it, "pendiente")}
+                            onClick={() => actualizarDraftGrupo(grupo, "estadoCobro", "pendiente")}
                             style={{
                               padding: "0.22rem 0.5rem",
                               borderRadius: "6px",
@@ -2160,7 +2404,7 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
                           </button>
                           <button
                             type="button"
-                            onClick={() => seleccionarEstadoCobro(it, "cobrado")}
+                            onClick={() => actualizarDraftGrupo(grupo, "estadoCobro", "cobrado")}
                             style={{
                               padding: "0.22rem 0.5rem",
                               borderRadius: "6px",
@@ -2176,11 +2420,50 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
                           </button>
                         </div>
                       </td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
-                          {urlPrefactura && (
+
+                      <td
+                        style={{ padding: "0.6rem 0.35rem" }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                          <span style={{ fontWeight: 700, color: "#475569" }}>$</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={valorSaldoInput}
+                            onChange={(e) => actualizarDraftGrupo(grupo, "saldoPendiente", e.target.value)}
+                            placeholder="0.00"
+                            aria-label={`Valor pendiente cotización ${num}`}
+                            style={{
+                              width: "105px",
+                              padding: "0.3rem 0.45rem",
+                              borderRadius: "6px",
+                              border: Number(valorSaldoInput) > 0 ? "1.5px solid #d97706" : "1px solid #cbd5e1",
+                              background: Number(valorSaldoInput) > 0 ? "#fffbeb" : "#fff",
+                              fontWeight: Number(valorSaldoInput) > 0 ? 700 : 400,
+                              color: Number(valorSaldoInput) > 0 ? "#92400e" : "#0f172a"
+                            }}
+                          />
+                        </div>
+                      </td>
+
+                      <td
+                        style={{ padding: "0.6rem 0.35rem", textAlign: "right", whiteSpace: "nowrap" }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                          <button
+                            type="button"
+                            onClick={() => setCotizacionDetalleNum(num)}
+                            className="ve-link"
+                            style={{ fontSize: "0.8rem", fontWeight: 700 }}
+                          >
+                            Ver detalle
+                          </button>
+                          {grupo.linkPrefactura && (
                             <a
-                              href={urlPrefactura}
+                              href={grupo.linkPrefactura}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="ve-link"
@@ -2191,14 +2474,6 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
                               <ExternalLink size={15} />
                             </a>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => eliminarItem(it.id)}
-                            className="ve-link"
-                            title="Eliminar registro"
-                          >
-                            <Trash2 size={15} />
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -2209,6 +2484,14 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
           </div>
         )}
       </section>
+
+      {grupoModalActivo && (
+        <ModalDetalleCotizacion
+          grupo={grupoModalActivo}
+          cerrar={() => setCotizacionDetalleNum("")}
+          onEliminarItem={eliminarItem}
+        />
+      )}
     </div>
   );
 }
