@@ -1,0 +1,17 @@
+{
+  "appId": "ec.elpibe.clinica",
+  "appName": "Clínica El Pibe",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "style": "LIGHT"
+    }
+  }
+}

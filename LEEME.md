@@ -1,0 +1,31 @@
+# Clínica Veterinaria El Pibe · Expedientes y exámenes
+La aplicación abre el directorio directamente. Cualquier visitante puede leer, crear y editar pacientes, propietarios y atenciones. Los cambios se guardan en Supabase y se comparten entre equipos. El nombre de profesional es opcional y se registra como dato declarado. Las ediciones simultáneas se comprueban con la versión del registro. La eliminación general y los datos de configuración de Drive quedan fuera del acceso de visitantes.
+
+## Abrir
+El paquete web compilado incluye index.html, el manifiesto y la caché de recursos estáticos. Se puede alojar su contenido en Cloudflare Pages Free. Al abrir la versión autónoma .html se puede trabajar en línea con la base clínica. El navegador requiere conectividad para guardar datos reales. La demostración utiliza objetos en memoria y conserva los cambios hasta que se cierra o recarga la vista.
+
+## Código editable
+Con Node.js 22.12 o posterior, ejecuta npm install, npm test y npm run dev. Para Cloudflare Pages, el comando de compilación es npm run build y la salida es dist. El proyecto usa React, Vite, Tailwind CSS y Lucide. Los datos se consultan por la API pública de Supabase con una clave publicable. Nunca introduzcas una clave secreta en el cliente. Para una copia ficticia ejecuta con VITE_SOLO_DEMO=1. Se incluye la URL y la clave pública de esta clínica. El logo vectorial es una aproximación de la referencia; en el código Vite se puede sustituir con src/logo-original.jpg o .png.
+
+## Google Drive
+Se creó una carpeta restringida, El Pibe - Exámenes clínicos. El propietario activa la conexión una sola vez siguiendo su documento privado de instalación. Después, todos los usuarios del aplicativo pueden subir, abrir y descargar los exámenes asociados a una visita. Los archivos quedan en Drive; Supabase guarda metadatos, la asociación clínica y el identificador interno del archivo. Hasta la activación, el sistema informa el estado y no da por subido ningún archivo. El máximo inicial es de 20 MiB por archivo. Los PDF y estudios diagnósticos conservan el original. Las fotos de seguimiento se optimizan en el dispositivo antes de subirlas. Las cargas repetidas con el mismo identificador son idempotentes.
+
+## Base clínica
+En una base nueva ejecuta las migraciones numeradas de supabase en orden. La segunda migración habilita de forma deliberada la lectura y edición clínica sin cuenta. La tercera restringe credenciales y referencias de Drive al servidor. El directorio, la ficha y los exámenes se actualizan al volver a la pestaña o con el botón Actualizar.
+
+
+## Consultas y hoja de hospitalización
+La cuarta migración incorpora la consulta estructurada, la hoja de ingreso, las prescripciones, los registros de dosis y la evolución por turno. Desde el expediente pueden abrirse «Nueva consulta», «Nuevo ingreso» y las hospitalizaciones previas. Las prescripciones permiten horarios fijos en Ecuador continental, intervalos en horas o una dosis única. El horario programado y la fecha y hora real se conservan por separado. Cada dosis admite un registro firmado con el nombre declarado por el internista. Las omisiones requieren motivo; un registro pendiente conserva su estado hasta que alguien lo documente. Al editar una pauta, las dosis ya registradas conservan la indicación original. El cierre de la hospitalización suspende las pautas restantes.
+Las evoluciones se agregan por fecha y turno. Los campos sin evaluar quedan sin registrar. Para usar una base nueva, aplica también supabase/modulo_04_consultas_y_hospital.sql después de las tres etapas anteriores.
+
+## Foto de identificación y jaula
+Desde la ficha o la hoja de hospitalización, elige «Añadir foto» o «Cambiar foto». La cámara también está disponible en móviles compatibles. El navegador convierte el JPG, PNG o WebP en una miniatura JPEG de hasta 320 píxeles en su lado mayor y 40 KiB. Solo se envía la miniatura a la carpeta de Google Drive ya configurada. El directorio y las hospitalizaciones muestran la foto vigente del paciente. Repetir la misma carga para ese paciente reutiliza el archivo. Si se cambia por una foto distinta, la miniatura previa permanece en Drive. La galería de exámenes conserva su flujo independiente.
+El médico puede elegir la jaula al ingresar al paciente o con «Asignar jaula» y «Cambiar jaula» en una hospitalización activa. Las cuatro opciones son Infeccioso, Post operatorio, Gatera y Hospitalización 1. Una nueva hospitalización empieza sin asignación. La ubicación escrita en registros anteriores se conserva en «Detalle de ubicación». La asignación se consulta también después de cerrar el ingreso. La quinta migración se incluye en supabase/modulo_05_foto_y_jaula.sql. La función pibe-examenes usa tanto index.ts como fotos.ts.
+En la demostración, Nube tiene una fotografía ilustrativa de Chelsea, de Stefan van der Walt, publicada bajo CC0 en [scikit-image](https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.chelsea).
+
+## Android
+El APK de distribución se descarga desde https://dxunidqyomvcedwlpiuq.supabase.co/functions/v1/pibe-instalar. La versión 1.0.0 usa el identificador ec.elpibe.clinica, el código de versión 1 y la firma de la clínica. La interfaz se incluye dentro del APK. Los expedientes se leen y se guardan en la misma base compartida de la versión web, y los exámenes y las miniaturas se consultan en la carpeta de Drive configurada. Estas operaciones requieren Internet.
+
+Para abrir el proyecto en Android Studio, instala las dependencias con npm ci y ejecuta npm run android:sync. Abre el directorio android. El proyecto usa Capacitor 8, JDK 21, la plataforma Android 36 y Build Tools 35.0.0. La versión mínima del sistema es Android 7.0. Conviene mantener Android System WebView actualizado. En Android el botón Atrás cierra el formulario abierto, vuelve de la hospitalización al expediente y desde el expediente al directorio. Desde el directorio regresa al lanzador.
+
+Para publicar otra versión, aumenta versionCode y versionName en android/app/build.gradle. Compila la variante release y fírmala con la misma clave PKCS#12 y el alias el-pibe. La copia de firma está en el respaldo privado de la clínica. Android Studio permite seleccionarla en Build → Generate Signed Bundle / APK → APK. El enlace público de instalación distribuye únicamente el APK firmado.

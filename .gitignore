@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+
+
+# Firma local de Android
+*.p12
+*.jks
+*.keystore
