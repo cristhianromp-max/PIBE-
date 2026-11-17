@@ -371,6 +371,7 @@ function crearRepositorio(config) {
 
   const hospital = new Proxy(hospitalBase, {
     get(target, prop, receiver) {
+      if (prop === "modulos") return modulos;
       const orig = Reflect.get(target, prop, receiver);
       if (typeof orig !== "function") return orig;
       return function (...args) {
