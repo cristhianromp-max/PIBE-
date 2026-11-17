@@ -300,16 +300,58 @@ function crearRepositorio(config) {
     }
   };
 
+  // ==========================================================================
+  // DIRECTORIO CON DETECCIÓN INMEDIATA DE HOSPITALIZADOS
+  // ==========================================================================
   async function listar(q = "", pagina = 0, signal) {
-    if (!demo) {
-      const filas = await rpc("pibe_directorio_identificado", { termino: q, cantidad: 31, desplazamiento: pagina * 30 }, signal);
-      return { items: filas.slice(0, 30), mas: filas.length > 30 };
+    if (demo) {
+      const valor = limpiar(q);
+      const filas = pacientes
+        .filter((p) => [p.nombre, p.propietario, p.cedula, p.codigo].some((s) => limpiar(s).includes(valor)))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre, "es") || a.id.localeCompare(b.id));
+
+      const items = filas.slice(pagina * 30, pagina * 30 + 30).map((p) => {
+        const activa = eventos.find((e) => e.paciente_id === p.id && e.tipo === "hospitalizacion" && e.abierta);
+        return {
+          ...p,
+          hospitalizado: Boolean(activa),
+          abierta: Boolean(activa),
+          jaula: activa?.jaula || p.jaula || ""
+        };
+      });
+      return { items, mas: filas.length > pagina * 30 + 30 };
     }
-    const valor = limpiar(q);
-    const filas = pacientes
-      .filter((p) => [p.nombre, p.propietario, p.cedula, p.codigo].some((s) => limpiar(s).includes(valor)))
-      .sort((a, b) => a.nombre.localeCompare(b.nombre, "es") || a.id.localeCompare(b.id));
-    return { items: filas.slice(pagina * 30, pagina * 30 + 30).map((p) => ({ ...p })), mas: filas.length > pagina * 30 + 30 };
+
+    const filas = await rpc("pibe_directorio_identificado", { termino: q, cantidad: 31, desplazamiento: pagina * 30 }, signal);
+    const baseItems = filas.slice(0, 30);
+
+    const items = await Promise.all(
+      baseItems.map(async (p) => {
+        if (p.hospitalizado || p.abierta || p.ingreso_activo) {
+          return { ...p, hospitalizado: true, abierta: true };
+        }
+        try {
+          const evs = await rpc(
+            "pibe_eventos_identificados",
+            { paciente: p.id, antes_de: null, antes_id: null },
+            signal
+          );
+          const activa = Array.isArray(evs)
+            ? evs.find((e) => e.tipo === "hospitalizacion" && e.abierta)
+            : null;
+          return {
+            ...p,
+            hospitalizado: Boolean(activa),
+            abierta: Boolean(activa),
+            jaula: activa?.jaula || p.jaula || ""
+          };
+        } catch {
+          return p;
+        }
+      })
+    );
+
+    return { items, mas: filas.length > 30 };
   }
 
   async function ficha(id, signal) {
