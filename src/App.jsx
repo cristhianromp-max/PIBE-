@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import {
   Camera, Search, Plus, Pencil, RefreshCw, ArrowLeft, ChevronRight,
   FolderOpen, Paperclip, Activity, FileText, X, Scissors, Receipt,
-  LogOut, Droplets, CheckCircle2, Trash2
+  LogOut, Droplets, CheckCircle2, Trash2, Sparkles, Upload
 } from "lucide-react";
 import { crearRepositorio, etiquetas, fechaCorta, fechaLocal, hora, edad, uuid } from "./datos.mjs";
 import { config, marca } from "./config";
@@ -33,7 +33,6 @@ const TIPOS_TERAPIA_HOSP = [
   "Nebulización"
 ];
 
-// Almacenamiento local sincronizado por paciente/ingreso para módulos extendidos
 function leerStore(clave, fallback) {
   try {
     const raw = localStorage.getItem(clave);
@@ -411,7 +410,6 @@ function ModalAltaHospital({ paciente, admision, profesionales, cerrar, onAltaCo
 
 // ============================================================================
 // PANEL DE TERAPIAS COMPLEMENTARIAS EN HOJA DE HOSPITALIZACIÓN
-// (Tópicos, Curaciones, Baños, Ozonoterapia, Nebulizaciones)
 // ============================================================================
 function PanelTerapiasComplementarias({ admisionId, profesionales }) {
   const [terapias, setTerapias] = useState(() => leerStore("elpibe_terapias_hosp", {}));
@@ -599,8 +597,16 @@ function PanelTerapiasComplementarias({ admisionId, profesionales }) {
 
 // ============================================================================
 // PESTAÑA DE CIRUGÍAS DEL PACIENTE
-// (Programación, Exámenes prequirúrgicos, Materiales y cantidades, Historial)
+// (Programación, Exámenes prequirúrgicos, Lista previa de materiales/hilos + Internista + "Guardar y subir")
 // ============================================================================
+function crearFilasBorradorMateriales() {
+  return [
+    { id: uuid(), nombre: "", cantidad: "" },
+    { id: uuid(), nombre: "", cantidad: "" },
+    { id: uuid(), nombre: "", cantidad: "" }
+  ];
+}
+
 function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecargar }) {
   const [cirugiasStore, setCirugiasStore] = useState(() => leerStore("elpibe_cirugias", {}));
   const lista = cirugiasStore[paciente.id] || [];
@@ -615,8 +621,11 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState("");
 
-  // Estado para agregar materiales usados en una cirugía específica
-  const [matInputs, setMatInputs] = useState({});
+  // Borrador en lista de materiales e hilos + internista por cada cirugía
+  const [borradoresMat, setBorradoresMat] = useState({});
+  const [internistasMat, setInternistasMat] = useState({});
+  const [errorMat, setErrorMat] = useState({});
+  const [avisoMat, setAvisoMat] = useState({});
   const [subiendoExtraId, setSubiendoExtraId] = useState("");
 
   const android = globalThis.Capacitor?.getPlatform?.() === "android";
@@ -625,6 +634,88 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
     const actualizado = { ...cirugiasStore, [paciente.id]: nuevaLista };
     setCirugiasStore(actualizado);
     guardarStore("elpibe_cirugias", actualizado);
+  }
+
+  function obtenerBorrador(cirugiaId) {
+    return borradoresMat[cirugiaId] || crearFilasBorradorMateriales();
+  }
+
+  function actualizarFilaBorrador(cirugiaId, filaId, campo, valor) {
+    const actual = obtenerBorrador(cirugiaId);
+    const siguiente = actual.map((f) => (f.id === filaId ? { ...f, [campo]: valor } : f));
+    setBorradoresMat({ ...borradoresMat, [cirugiaId]: siguiente });
+  }
+
+  function agregarFilaBorrador(cirugiaId) {
+    const actual = obtenerBorrador(cirugiaId);
+    setBorradoresMat({
+      ...borradoresMat,
+      [cirugiaId]: [...actual, { id: uuid(), nombre: "", cantidad: "" }]
+    });
+  }
+
+  function quitarFilaBorrador(cirugiaId, filaId) {
+    const actual = obtenerBorrador(cirugiaId);
+    if (actual.length <= 1) {
+      setBorradoresMat({
+        ...borradoresMat,
+        [cirugiaId]: [{ id: uuid(), nombre: "", cantidad: "" }]
+      });
+      return;
+    }
+    setBorradoresMat({
+      ...borradoresMat,
+      [cirugiaId]: actual.filter((f) => f.id !== filaId)
+    });
+  }
+
+  function guardarYSubirMateriales(cirugiaId, e) {
+    e.preventDefault();
+    const internista = (internistasMat[cirugiaId] || "").trim();
+    if (!internista) {
+      setErrorMat({
+        ...errorMat,
+        [cirugiaId]: "Escribe primero el nombre del internista que realiza el registro."
+      });
+      return;
+    }
+
+    const filas = obtenerBorrador(cirugiaId);
+    const validos = filas.filter((f) => f.nombre.trim() && f.cantidad.trim());
+    if (validos.length === 0) {
+      setErrorMat({
+        ...errorMat,
+        [cirugiaId]: "Ingresa al menos un material o hilo de sutura con su cantidad en la lista."
+      });
+      return;
+    }
+
+    const fechaReg = fechaLocal(new Date()).replace("T", " ");
+    const nuevosItems = validos.map((f) => ({
+      id: uuid(),
+      nombre: f.nombre.trim(),
+      cantidad: f.cantidad.trim(),
+      internista,
+      fechaRegistro: fechaReg
+    }));
+
+    persistir(
+      lista.map((c) =>
+        c.id === cirugiaId
+          ? { ...c, materiales: [...(c.materiales || []), ...nuevosItems] }
+          : c
+      )
+    );
+
+    setBorradoresMat({ ...borradoresMat, [cirugiaId]: crearFilasBorradorMateriales() });
+    setErrorMat({ ...errorMat, [cirugiaId]: "" });
+    setAvisoMat({
+      ...avisoMat,
+      [cirugiaId]: `Se registraron ${nuevosItems.length} material(es)/hilo(s) por ${internista}.`
+    });
+    setTimeout(() => {
+      setAvisoMat((prev) => ({ ...prev, [cirugiaId]: "" }));
+    }, 4000);
   }
 
   async function subirExamenPrequirurgico(file) {
@@ -706,26 +797,6 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
     } finally {
       setSubiendoExtraId("");
     }
-  }
-
-  function agregarMaterialCirugia(cirugiaId, e) {
-    e.preventDefault();
-    const actual = matInputs[cirugiaId] || { nombre: "", cantidad: "" };
-    if (!actual.nombre.trim() || !actual.cantidad.trim()) return;
-    persistir(
-      lista.map((c) =>
-        c.id === cirugiaId
-          ? {
-              ...c,
-              materiales: [
-                ...(c.materiales || []),
-                { id: uuid(), nombre: actual.nombre.trim(), cantidad: actual.cantidad.trim() }
-              ]
-            }
-          : c
-      )
-    );
-    setMatInputs({ ...matInputs, [cirugiaId]: { nombre: "", cantidad: "" } });
   }
 
   function eliminarMaterialCirugia(cirugiaId, matId) {
@@ -855,7 +926,8 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
         ) : (
           <div style={{ display: "grid", gap: "0.9rem", marginTop: "0.75rem" }}>
             {lista.map((cir) => {
-              const inputMat = matInputs[cir.id] || { nombre: "", cantidad: "" };
+              const filasBorrador = obtenerBorrador(cir.id);
+              const internistaActual = internistasMat[cir.id] ?? "";
               return (
                 <div
                   key={cir.id}
@@ -966,68 +1038,150 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                     )}
                   </div>
 
-                  {/* Materiales usados en la cirugía y cantidad */}
-                  <div style={{ marginTop: "0.75rem", padding: "0.65rem", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                    <strong style={{ fontSize: "0.86rem", display: "block", marginBottom: "0.45rem" }}>
-                      Materiales e insumos utilizados en cirugía ({(cir.materiales || []).length})
+                  {/* Materiales e hilos de sutura: Lista en lote + Internista + "Guardar y subir" */}
+                  <div style={{ marginTop: "0.75rem", padding: "0.75rem", border: "1px solid #cbd5e1", borderRadius: "10px", background: "#fcfdfe" }}>
+                    <strong style={{ fontSize: "0.88rem", display: "block", marginBottom: "0.5rem" }}>
+                      Registro de materiales e hilos de sutura utilizados
                     </strong>
 
-                    {(cir.materiales || []).length > 0 && (
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem", marginBottom: "0.55rem" }}>
-                        <thead>
-                          <tr style={{ textAlign: "left", borderBottom: "1px solid #e2e8f0", color: "#475569" }}>
-                            <th style={{ padding: "0.3rem 0.25rem" }}>Material / Insumo / Fármaco</th>
-                            <th style={{ padding: "0.3rem 0.25rem" }}>Cantidad</th>
-                            <th style={{ width: "36px" }}></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {cir.materiales.map((m) => (
-                            <tr key={m.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                              <td style={{ padding: "0.35rem 0.25rem", fontWeight: 600 }}>{m.nombre}</td>
-                              <td style={{ padding: "0.35rem 0.25rem" }}>{m.cantidad}</td>
-                              <td style={{ textAlign: "right" }}>
-                                <button
-                                  type="button"
-                                  onClick={() => eliminarMaterialCirugia(cir.id, m.id)}
-                                  className="ve-link"
-                                  title="Quitar material"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </td>
-                            </tr>
+                    <form onSubmit={(e) => guardarYSubirMateriales(cir.id, e)} style={{ display: "grid", gap: "0.6rem" }}>
+                      <div className="ve-field" style={{ maxWidth: "360px" }}>
+                        <label>Nombre del internista que registra *</label>
+                        <input
+                          type="text"
+                          value={internistaActual}
+                          onChange={(e) => setInternistasMat({ ...internistasMat, [cir.id]: e.target.value })}
+                          placeholder="Escribe el nombre del internista..."
+                          list={`ve-int-cir-${cir.id}`}
+                        />
+                        <datalist id={`ve-int-cir-${cir.id}`}>
+                          {(profesionales || []).map((p) => (
+                            <option key={p} value={p} />
                           ))}
-                        </tbody>
-                      </table>
-                    )}
+                        </datalist>
+                      </div>
 
-                    <form
-                      onSubmit={(e) => agregarMaterialCirugia(cir.id, e)}
-                      style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}
-                    >
-                      <input
-                        type="text"
-                        placeholder="Material usado (ej. Sutura PGA 2-0, Gasas, Propofol)"
-                        value={inputMat.nombre}
-                        onChange={(e) =>
-                          setMatInputs({ ...matInputs, [cir.id]: { ...inputMat, nombre: e.target.value } })
-                        }
-                        style={{ flex: "2 1 200px", padding: "0.4rem 0.6rem", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Cantidad (ej. 2 sobres, 5 ml)"
-                        value={inputMat.cantidad}
-                        onChange={(e) =>
-                          setMatInputs({ ...matInputs, [cir.id]: { ...inputMat, cantidad: e.target.value } })
-                        }
-                        style={{ flex: "1 1 120px", padding: "0.4rem 0.6rem", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                      />
-                      <button type="submit" className="ve-button">
-                        + Añadir material
-                      </button>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                          <thead>
+                            <tr style={{ textAlign: "left", background: "#f1f5f9", color: "#334155" }}>
+                              <th style={{ padding: "0.4rem 0.5rem", width: "36px" }}>#</th>
+                              <th style={{ padding: "0.4rem 0.5rem" }}>Material o hilo de sutura</th>
+                              <th style={{ padding: "0.4rem 0.5rem", width: "180px" }}>Cantidad</th>
+                              <th style={{ padding: "0.4rem 0.5rem", width: "40px" }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filasBorrador.map((fila, idx) => (
+                              <tr key={fila.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                                <td style={{ padding: "0.35rem 0.5rem", color: "#64748b", fontWeight: 600 }}>
+                                  {idx + 1}
+                                </td>
+                                <td style={{ padding: "0.35rem 0.4rem" }}>
+                                  <input
+                                    type="text"
+                                    placeholder="Ej. Sutura PGA 2-0, Nylon 3-0, Gasas, Propofol..."
+                                    value={fila.nombre}
+                                    onChange={(e) => actualizarFilaBorrador(cir.id, fila.id, "nombre", e.target.value)}
+                                    style={{
+                                      width: "100%",
+                                      padding: "0.4rem 0.55rem",
+                                      borderRadius: "6px",
+                                      border: "1px solid #cbd5e1"
+                                    }}
+                                  />
+                                </td>
+                                <td style={{ padding: "0.35rem 0.4rem" }}>
+                                  <input
+                                    type="text"
+                                    placeholder="Ej. 2 sobres, 5 ml..."
+                                    value={fila.cantidad}
+                                    onChange={(e) => actualizarFilaBorrador(cir.id, fila.id, "cantidad", e.target.value)}
+                                    style={{
+                                      width: "100%",
+                                      padding: "0.4rem 0.55rem",
+                                      borderRadius: "6px",
+                                      border: "1px solid #cbd5e1"
+                                    }}
+                                  />
+                                </td>
+                                <td style={{ textAlign: "center" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => quitarFilaBorrador(cir.id, fila.id)}
+                                    className="ve-link"
+                                    title="Quitar fila"
+                                  >
+                                    <X size={15} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {errorMat[cir.id] && (
+                        <p className="ve-message" role="alert" style={{ margin: 0 }}>
+                          {errorMat[cir.id]}
+                        </p>
+                      )}
+
+                      {avisoMat[cir.id] && (
+                        <p className="ve-confirm" role="status" style={{ margin: 0 }}>
+                          {avisoMat[cir.id]}
+                        </p>
+                      )}
+
+                      <div className="ve-actions">
+                        <Boton icono={Plus} onClick={() => agregarFilaBorrador(cir.id)}>
+                          Agregar fila a la lista
+                        </Boton>
+                        <button type="submit" className="ve-button" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                          <Upload size={15} /> Guardar y subir
+                        </button>
+                      </div>
                     </form>
+
+                    {/* Lista ya registrada y guardada */}
+                    {(cir.materiales || []).length > 0 && (
+                      <div style={{ marginTop: "0.85rem", paddingTop: "0.65rem", borderTop: "1px dashed #cbd5e1" }}>
+                        <strong style={{ fontSize: "0.84rem", display: "block", marginBottom: "0.4rem", color: "#0f172a" }}>
+                          Materiales e hilos registrados en esta cirugía ({cir.materiales.length})
+                        </strong>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.84rem" }}>
+                          <thead>
+                            <tr style={{ textAlign: "left", borderBottom: "1px solid #e2e8f0", color: "#475569" }}>
+                              <th style={{ padding: "0.3rem 0.25rem" }}>Material / Hilo</th>
+                              <th style={{ padding: "0.3rem 0.25rem" }}>Cantidad</th>
+                              <th style={{ padding: "0.3rem 0.25rem" }}>Registrado por</th>
+                              <th style={{ width: "36px" }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cir.materiales.map((m) => (
+                              <tr key={m.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                <td style={{ padding: "0.35rem 0.25rem", fontWeight: 600 }}>{m.nombre}</td>
+                                <td style={{ padding: "0.35rem 0.25rem" }}>{m.cantidad}</td>
+                                <td style={{ padding: "0.35rem 0.25rem" }} className="ve-meta">
+                                  {m.internista || "Sin registrar"} {m.fechaRegistro ? `· ${m.fechaRegistro}` : ""}
+                                </td>
+                                <td style={{ textAlign: "right" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => eliminarMaterialCirugia(cir.id, m.id)}
+                                    className="ve-link"
+                                    title="Eliminar registro"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
 
                   {/* Observaciones editables */}
@@ -1051,8 +1205,16 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
 }
 
 // ============================================================================
-// PESTAÑA DE COTIZACIONES (REGISTRO DIARIO DE INSUMOS POR INTERNISTAS)
+// PESTAÑA DE COTIZACIONES (TABLA CÓMODA PARA INTERNISTAS)
 // ============================================================================
+function crearFilasCotizacion() {
+  return [
+    { id: uuid(), tipoItem: "Medicina", descripcion: "", cantidad: "", nota: "" },
+    { id: uuid(), tipoItem: "Material médico", descripcion: "", cantidad: "", nota: "" },
+    { id: uuid(), tipoItem: "Insumo", descripcion: "", cantidad: "", nota: "" }
+  ];
+}
+
 function PestanaCotizaciones({ paciente, profesionales }) {
   const [cotStore, setCotStore] = useState(() => leerStore("elpibe_cotizaciones", {}));
   const lista = cotStore[paciente.id] || [];
@@ -1060,11 +1222,9 @@ function PestanaCotizaciones({ paciente, profesionales }) {
   const [numeroCot, setNumeroCot] = useState(() => lista[0]?.numeroCotizacion || "");
   const [internista, setInternista] = useState("MVZ. Cristhian Romero");
   const [fecha, setFecha] = useState(fechaLocal(new Date()).slice(0, 10));
-  const [tipoItem, setTipoItem] = useState("Medicina");
-  const [descripcion, setDescripcion] = useState("");
-  const [cantidad, setCantidad] = useState("");
-  const [nota, setNota] = useState("");
+  const [filasTabla, setFilasTabla] = useState(() => crearFilasCotizacion());
   const [filtroCot, setFiltroCot] = useState("TODAS");
+  const [avisoCot, setAvisoCot] = useState("");
 
   function persistir(nuevaLista) {
     const actualizado = { ...cotStore, [paciente.id]: nuevaLista };
@@ -1072,26 +1232,45 @@ function PestanaCotizaciones({ paciente, profesionales }) {
     guardarStore("elpibe_cotizaciones", actualizado);
   }
 
-  function agregarItemCotizacion(e) {
-    e.preventDefault();
-    if (!numeroCot.trim() || !descripcion.trim() || !cantidad.trim() || !internista.trim()) return;
+  function actualizarFila(filaId, campo, valor) {
+    setFilasTabla((prev) => prev.map((f) => (f.id === filaId ? { ...f, [campo]: valor } : f)));
+  }
 
-    const nuevo = {
+  function agregarFila() {
+    setFilasTabla((prev) => [
+      ...prev,
+      { id: uuid(), tipoItem: "Medicina", descripcion: "", cantidad: "", nota: "" }
+    ]);
+  }
+
+  function quitarFila(filaId) {
+    setFilasTabla((prev) => (prev.length > 1 ? prev.filter((f) => f.id !== filaId) : crearFilasCotizacion()));
+  }
+
+  function guardarTablaCotizacion(e) {
+    e.preventDefault();
+    if (!numeroCot.trim() || !internista.trim()) return;
+
+    const filasValidas = filasTabla.filter((f) => f.descripcion.trim() && f.cantidad.trim());
+    if (filasValidas.length === 0) return;
+
+    const horaActual = hora(new Date());
+    const nuevosRegistros = filasValidas.map((f) => ({
       id: uuid(),
       numeroCotizacion: numeroCot.trim(),
       internista: internista.trim(),
       fecha,
-      tipoItem,
-      descripcion: descripcion.trim(),
-      cantidad: cantidad.trim(),
-      nota: nota.trim(),
-      horaRegistro: hora(new Date())
-    };
+      tipoItem: f.tipoItem,
+      descripcion: f.descripcion.trim(),
+      cantidad: f.cantidad.trim(),
+      nota: f.nota.trim(),
+      horaRegistro: horaActual
+    }));
 
-    persistir([nuevo, ...lista]);
-    setDescripcion("");
-    setCantidad("");
-    setNota("");
+    persistir([...nuevosRegistros, ...lista]);
+    setFilasTabla(crearFilasCotizacion());
+    setAvisoCot(`Se guardaron ${nuevosRegistros.length} ítem(s) en la cotización #${numeroCot.trim()}.`);
+    setTimeout(() => setAvisoCot(""), 4000);
   }
 
   function eliminarItem(itemId) {
@@ -1110,85 +1289,126 @@ function PestanaCotizaciones({ paciente, profesionales }) {
           </h2>
         </div>
 
-        <form onSubmit={agregarItemCotizacion} className="ve-campos" style={{ marginTop: "0.75rem" }}>
-          <div className="ve-field">
-            <label>N.º de Cotización (manual) *</label>
-            <input
-              type="text"
-              value={numeroCot}
-              onChange={(e) => setNumeroCot(e.target.value)}
-              placeholder="Ej. COT-00124"
-              required
-            />
+        <form onSubmit={guardarTablaCotizacion} style={{ display: "grid", gap: "0.85rem", marginTop: "0.75rem" }}>
+          <div className="ve-campos">
+            <div className="ve-field">
+              <label>N.º de Cotización (manual) *</label>
+              <input
+                type="text"
+                value={numeroCot}
+                onChange={(e) => setNumeroCot(e.target.value)}
+                placeholder="Ej. COT-00124"
+                required
+              />
+            </div>
+
+            <div className="ve-field">
+              <label>Internista responsable *</label>
+              <input
+                type="text"
+                value={internista}
+                onChange={(e) => setInternista(e.target.value)}
+                list="ve-prof-cot"
+                placeholder="Nombre del internista"
+                required
+              />
+              <datalist id="ve-prof-cot">
+                {(profesionales || []).map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
+            </div>
+
+            <div className="ve-field">
+              <label>Fecha *</label>
+              <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} required />
+            </div>
           </div>
 
-          <div className="ve-field">
-            <label>Internista responsable *</label>
-            <input
-              type="text"
-              value={internista}
-              onChange={(e) => setInternista(e.target.value)}
-              list="ve-prof-cot"
-              placeholder="Nombre del internista"
-              required
-            />
-            <datalist id="ve-prof-cot">
-              {(profesionales || []).map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
+          {/* Tabla cómoda de ingreso múltiple */}
+          <div style={{ overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: "10px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+              <thead>
+                <tr style={{ textAlign: "left", background: "#f1f5f9", color: "#334155", borderBottom: "1px solid #cbd5e1" }}>
+                  <th style={{ padding: "0.5rem", width: "36px" }}>#</th>
+                  <th style={{ padding: "0.5rem", width: "165px" }}>Categoría</th>
+                  <th style={{ padding: "0.5rem" }}>Material / Medicina / Insumo</th>
+                  <th style={{ padding: "0.5rem", width: "165px" }}>Cantidad</th>
+                  <th style={{ padding: "0.5rem", width: "200px" }}>Observación (opcional)</th>
+                  <th style={{ padding: "0.5rem", width: "38px" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filasTabla.map((fila, idx) => (
+                  <tr key={fila.id} style={{ borderBottom: "1px solid #e2e8f0", background: "#fff" }}>
+                    <td style={{ padding: "0.4rem 0.5rem", color: "#64748b", fontWeight: 700 }}>{idx + 1}</td>
+                    <td style={{ padding: "0.35rem 0.4rem" }}>
+                      <select
+                        value={fila.tipoItem}
+                        onChange={(e) => actualizarFila(fila.id, "tipoItem", e.target.value)}
+                        style={{ width: "100%", padding: "0.42rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                      >
+                        <option value="Medicina">Medicina</option>
+                        <option value="Material médico">Material médico</option>
+                        <option value="Insumo">Insumo</option>
+                        <option value="Examen / Procedimiento">Examen / Proc.</option>
+                      </select>
+                    </td>
+                    <td style={{ padding: "0.35rem 0.4rem" }}>
+                      <input
+                        type="text"
+                        value={fila.descripcion}
+                        onChange={(e) => actualizarFila(fila.id, "descripcion", e.target.value)}
+                        placeholder="Ej. Catéter 22G, Ringer Lactato, Ceftriaxona..."
+                        style={{ width: "100%", padding: "0.42rem 0.55rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                      />
+                    </td>
+                    <td style={{ padding: "0.35rem 0.4rem" }}>
+                      <input
+                        type="text"
+                        value={fila.cantidad}
+                        onChange={(e) => actualizarFila(fila.id, "cantidad", e.target.value)}
+                        placeholder="Ej. 2 unid, 3.5 ml"
+                        style={{ width: "100%", padding: "0.42rem 0.55rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                      />
+                    </td>
+                    <td style={{ padding: "0.35rem 0.4rem" }}>
+                      <input
+                        type="text"
+                        value={fila.nota}
+                        onChange={(e) => actualizarFila(fila.id, "nota", e.target.value)}
+                        placeholder="Turno / detalle..."
+                        style={{ width: "100%", padding: "0.42rem 0.55rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                      />
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => quitarFila(fila.id)}
+                        className="ve-link"
+                        title="Quitar fila"
+                      >
+                        <X size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
-          <div className="ve-field">
-            <label>Fecha *</label>
-            <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} required />
-          </div>
+          {avisoCot && (
+            <p className="ve-confirm" role="status" style={{ margin: 0 }}>
+              {avisoCot}
+            </p>
+          )}
 
-          <div className="ve-field">
-            <label>Tipo</label>
-            <select value={tipoItem} onChange={(e) => setTipoItem(e.target.value)}>
-              <option value="Medicina">Medicina</option>
-              <option value="Material médico">Material médico</option>
-              <option value="Insumo">Insumo</option>
-              <option value="Examen / Procedimiento">Examen / Procedimiento</option>
-            </select>
-          </div>
-
-          <div className="ve-field">
-            <label>Material / Medicina / Insumo *</label>
-            <input
-              type="text"
-              value={descripcion}
-              onChange={(e) => setDescripcion(e.target.value)}
-              placeholder="Ej. Catéter 22G, Ringer Lactato 500ml, Ceftriaxona..."
-              required
-            />
-          </div>
-
-          <div className="ve-field">
-            <label>Cantidad *</label>
-            <input
-              type="text"
-              value={cantidad}
-              onChange={(e) => setCantidad(e.target.value)}
-              placeholder="Ej. 2 unidades, 3.5 ml, 1 frasco"
-              required
-            />
-          </div>
-
-          <div className="ve-field ve-ancho">
-            <label>Observación (opcional)</label>
-            <input
-              type="text"
-              value={nota}
-              onChange={(e) => setNota(e.target.value)}
-              placeholder="Turno o detalle adicional..."
-            />
-          </div>
-
-          <div className="ve-actions ve-ancho">
+          <div className="ve-actions">
+            <Boton icono={Plus} onClick={agregarFila}>
+              Agregar fila
+            </Boton>
             <button type="submit" className="ve-button">
-              + Registrar en cotización
+              Guardar en cotización
             </button>
           </div>
         </form>
@@ -1268,6 +1488,175 @@ function PestanaCotizaciones({ paciente, profesionales }) {
 }
 
 // ============================================================================
+// PESTAÑA DE PELUQUERÍAS ESTÉTICAS
+// ============================================================================
+function PestanaPeluqueria({ paciente }) {
+  const [peluStore, setPeluStore] = useState(() => leerStore("elpibe_peluquerias", {}));
+  const lista = peluStore[paciente.id] || [];
+
+  const [peluquero, setPeluquero] = useState("");
+  const [fecha, setFecha] = useState(fechaLocal(new Date()).slice(0, 10));
+  const [precio, setPrecio] = useState("");
+  const [observacion, setObservacion] = useState("");
+  const [avisoPelu, setAvisoPelu] = useState("");
+
+  function persistir(nuevaLista) {
+    const actualizado = { ...peluStore, [paciente.id]: nuevaLista };
+    setPeluStore(actualizado);
+    guardarStore("elpibe_peluquerias", actualizado);
+  }
+
+  function guardarPeluqueria(e) {
+    e.preventDefault();
+    if (!peluquero.trim() || !fecha || precio === "") return;
+
+    const nuevo = {
+      id: uuid(),
+      peluquero: peluquero.trim(),
+      fecha,
+      precio: parseFloat(precio) || 0,
+      observacion: observacion.trim()
+    };
+
+    persistir([nuevo, ...lista]);
+    setPrecio("");
+    setObservacion("");
+    setAvisoPelu(`Peluquería estética registrada para ${paciente.nombre}.`);
+    setTimeout(() => setAvisoPelu(""), 4000);
+  }
+
+  function eliminarPeluqueria(regId) {
+    persistir(lista.filter((r) => r.id !== regId));
+  }
+
+  const peluquerosPrevios = [...new Set(lista.map((r) => r.peluquero).filter(Boolean))];
+
+  return (
+    <div style={{ display: "grid", gap: "1rem" }}>
+      <section className="ve-panel ve-pad">
+        <div className="ve-row">
+          <h2 style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
+            <Sparkles size={18} /> Registrar Peluquería Estética
+          </h2>
+        </div>
+
+        <form onSubmit={guardarPeluqueria} className="ve-campos" style={{ marginTop: "0.75rem" }}>
+          <div className="ve-field">
+            <label>Nombre del peluquero *</label>
+            <input
+              type="text"
+              value={peluquero}
+              onChange={(e) => setPeluquero(e.target.value)}
+              list="ve-peluqueros-lista"
+              placeholder="Nombre del groomer / peluquero"
+              required
+            />
+            <datalist id="ve-peluqueros-lista">
+              {peluquerosPrevios.map((nom) => (
+                <option key={nom} value={nom} />
+              ))}
+            </datalist>
+          </div>
+
+          <div className="ve-field">
+            <label>Fecha *</label>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="ve-field">
+            <label>Precio ($) *</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={precio}
+              onChange={(e) => setPrecio(e.target.value)}
+              placeholder="Ej. 15.00"
+              required
+            />
+          </div>
+
+          <div className="ve-field ve-ancho">
+            <label>Observación (opcional)</label>
+            <textarea
+              rows={2}
+              value={observacion}
+              onChange={(e) => setObservacion(e.target.value)}
+              placeholder="Tipo de corte, baño medicado/estético, comportamiento, nudos, limpieza de oídos..."
+            />
+          </div>
+
+          {avisoPelu && (
+            <p className="ve-confirm ve-ancho" role="status" style={{ margin: 0 }}>
+              {avisoPelu}
+            </p>
+          )}
+
+          <div className="ve-actions ve-ancho">
+            <button type="submit" className="ve-button">
+              Guardar
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="ve-panel ve-pad">
+        <div className="ve-row">
+          <h2>Historial de Peluquerías Estéticas ({lista.length})</h2>
+        </div>
+
+        {lista.length === 0 ? (
+          <p className="ve-sub">Aún no hay registros de peluquería estética para {paciente.nombre}.</p>
+        ) : (
+          <div style={{ overflowX: "auto", marginTop: "0.75rem" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.86rem" }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#334155" }}>
+                  <th style={{ padding: "0.5rem 0.35rem" }}>Fecha</th>
+                  <th style={{ padding: "0.5rem 0.35rem" }}>Peluquero</th>
+                  <th style={{ padding: "0.5rem 0.35rem" }}>Precio</th>
+                  <th style={{ padding: "0.5rem 0.35rem" }}>Observación</th>
+                  <th style={{ width: "36px" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "0.5rem 0.35rem", fontWeight: 600 }}>{r.fecha}</td>
+                    <td style={{ padding: "0.5rem 0.35rem" }}>{r.peluquero}</td>
+                    <td style={{ padding: "0.5rem 0.35rem", fontWeight: 700, color: "#0f766e" }}>
+                      ${Number(r.precio).toFixed(2)}
+                    </td>
+                    <td style={{ padding: "0.5rem 0.35rem" }} className="ve-meta">
+                      {r.observacion || "Sin observaciones"}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        type="button"
+                        onClick={() => eliminarPeluqueria(r.id)}
+                        className="ve-link"
+                        title="Eliminar registro"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ============================================================================
 // HISTORIA CLÍNICA DEL PACIENTE
 // ============================================================================
 function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recargar, onSyncHosp, onAltaSuccess }) {
@@ -1282,7 +1671,6 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
   const hospitalAbierto = atenciones.find((a) => a.tipo === "hospitalizacion" && a.abierta);
   const admision = atenciones.find((a) => a.id === ingresoId && a.tipo === "hospitalizacion");
 
-  // Sincronizar estado de hospitalización del paciente con el directorio
   useEffect(() => {
     if (onSyncHosp && p?.id) {
       onSyncHosp(p.id, hospitalAbierto ? { activa: true, jaula: hospitalAbierto.jaula || "" } : { activa: false });
@@ -1296,7 +1684,6 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
     abrir({ clase: "foto", d: p, fotoActual: actual ?? null });
   }
 
-  // Vista abierta de la Hoja de Hospitalización
   if (admision) {
     return (
       <div className="ve-paper">
@@ -1453,6 +1840,9 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
             <Boton principal={pestana === "cotizaciones"} icono={Receipt} onClick={() => setPestana("cotizaciones")}>
               Cotizaciones
             </Boton>
+            <Boton principal={pestana === "peluqueria"} icono={Sparkles} onClick={() => setPestana("peluqueria")}>
+              Peluquería
+            </Boton>
             <Boton principal={pestana === "examenes"} icono={Paperclip} onClick={() => setPestana("examenes")}>
               Exámenes ({anexos.length})
             </Boton>
@@ -1547,6 +1937,8 @@ function Historia({ ficha, abrir, volver, ingresoId, verIngreso, revision, recar
       )}
 
       {pestana === "cotizaciones" && <PestanaCotizaciones paciente={p} profesionales={profesionales} />}
+
+      {pestana === "peluqueria" && <PestanaPeluqueria paciente={p} />}
 
       {pestana === "examenes" && (
         <section className="ve-panel ve-pad">
@@ -1735,7 +2127,6 @@ export default function App() {
     recargar();
   }
 
-  // Separación de pacientes hospitalizados vs otros pacientes
   const esHospitalizado = (p) => Boolean(p.hospitalizado || p.abierta || p.ingreso_activo || hospMapa[p.id]?.activa);
   const pacientesHosp = resultado.items.filter((p) => esHospitalizado(p));
   const pacientesOtros = resultado.items.filter((p) => !esHospitalizado(p));
@@ -1827,7 +2218,6 @@ export default function App() {
                 />
               </div>
 
-              {/* Filtro rápido de directorio */}
               <div className="ve-actions" style={{ marginTop: "0.55rem", flexWrap: "wrap", gap: "0.35rem" }}>
                 <button
                   type="button"
