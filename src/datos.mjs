@@ -87,6 +87,74 @@ async function subirADrive(file, carpeta, nombreArchivo) {
   return { ...json, fileId };
 }
 
+function normalizarFrecuenciaTexto(raw) {
+  if (raw == null || raw === "") return "Cada 12h";
+  if (typeof raw === "number") return `Cada ${raw}h`;
+  const s = String(raw).trim();
+  if (/^\d+$/.test(s)) return `Cada ${s}h`;
+  return s;
+}
+
+function convertirPautasHoja(rawHoja, meta = {}) {
+  if (!rawHoja) return [];
+  const pautasRaw = Array.isArray(rawHoja)
+    ? rawHoja
+    : rawHoja.pautas || rawHoja.medicaciones || rawHoja.tratamientos || rawHoja.hoja?.pautas || [];
+  const adminsRaw = Array.isArray(rawHoja)
+    ? []
+    : rawHoja.administraciones || rawHoja.tomas || rawHoja.aplicaciones || rawHoja.hoja?.administraciones || [];
+
+  if (!Array.isArray(pautasRaw)) return [];
+
+  return pautasRaw
+    .filter((p) => {
+      if (!p || typeof p !== "object") return false;
+      if (p.activa === false || p.activo === false || p.suspendida === true) return false;
+      const st = String(p.estado || "").toLowerCase();
+      if (st === "suspendida" || st === "finalizada" || st === "cancelada") return false;
+      return true;
+    })
+    .map((p) => {
+      const pautaId = String(p.id || uuid());
+      const propias = p.administraciones || p.tomas || p.aplicaciones || [];
+      const vinculadas = Array.isArray(adminsRaw)
+        ? adminsRaw.filter((a) => String(a.pauta_id || a.pautaId || a.medicacion_id || a.medicacionId || "") === pautaId)
+        : [];
+      const todasApps = [...propias, ...vinculadas].map((a, i) => ({
+        id: String(a.id || `${pautaId}-adm-${i}`),
+        fecha: a.fecha || a.fecha_hora || a.fechaHora || a.aplicada_en || a.administrado_en || a.creado || "",
+        medico: a.profesional || a.medico || a.aplicado_por || a.responsable || "",
+        nota: a.nota || a.observacion || ""
+      }));
+
+      const via = p.via || p.ruta || "";
+      const dosisBase = p.dosis || p.cantidad || p.volumen || "";
+      const dosisTexto = [dosisBase, via].filter(Boolean).join(" · ");
+      const nombreMed = p.medicamento || p.farmaco || p.producto || p.nombre || p.titulo || "Medicación";
+
+      return {
+        id: `hoja_${pautaId}`,
+        pautaId,
+        origenHoja: true,
+        admisionId: String(p.atencion_id || p.admision_id || p.admisionId || meta.admisionId || ""),
+        pacienteId: String(p.paciente_id || p.pacienteId || meta.pacienteId || ""),
+        pacienteNombre: p.paciente_nombre || p.pacienteNombre || meta.pacienteNombre || "",
+        especie: p.especie || meta.especie || "",
+        jaula: p.jaula || meta.jaula || "",
+        tipo: via ? `Medicación (${via})` : "Medicación hospitalaria",
+        producto: nombreMed,
+        dosis: dosisTexto,
+        frecuencia: normalizarFrecuenciaTexto(p.frecuencia ?? p.cada ?? p.intervalo ?? p.horario),
+        duracion: p.duracion || (p.dias ? `${p.dias} días` : "Según evolución"),
+        proximaManual: p.proxima || p.proxima_toma || p.proximaManual || p.inicio || p.fecha_inicio || p.creado || "",
+        fechaInicio: p.inicio || p.fecha_inicio || p.creado || "",
+        medico: p.profesional || p.medico || "",
+        activa: true,
+        aplicaciones: todasApps
+      };
+    });
+}
+
 function crearRepositorio(config) {
   const demo = !config.url || !config.clave;
   const pacientes = [
@@ -265,19 +333,88 @@ function crearRepositorio(config) {
   };
 
   // ==========================================================================
-  // CENTRO DE NOTIFICACIONES GLOBAL (MEDICACIÓN Y TERAPIAS ACTIVAS)
+  // PUENTE AUTOMÁTICO CON HOJA DE HOSPITALIZACIÓN (INYECCIONES Y PAUTAS)
+  // ==========================================================================
+  const hospitalBase = crearHospital(rpc, demo, eventos, fechaLocal, pacientes);
+
+  async function sincronizarSnapshotHoja(admisionId, resultadoHoja) {
+    if (!admisionId || !resultadoHoja || typeof resultadoHoja !== "object") return;
+    const tienePautas =
+      Array.isArray(resultadoHoja.pautas) ||
+      Array.isArray(resultadoHoja.medicaciones) ||
+      Array.isArray(resultadoHoja.hoja?.pautas);
+    if (!tienePautas) return;
+
+    const pautasConvertidas = convertirPautasHoja(resultadoHoja, { admisionId });
+    await modulos
+      .guardar(admisionId, "hoja_hosp_sync", {
+        id: `hoja_sync_${admisionId}`,
+        admisionId: String(admisionId),
+        pautas: pautasConvertidas,
+        actualizado: new Date().toISOString()
+      })
+      .catch(() => null);
+  }
+
+  const hospital = new Proxy(hospitalBase, {
+    get(target, prop, receiver) {
+      const orig = Reflect.get(target, prop, receiver);
+      if (typeof orig !== "function") return orig;
+      return function (...args) {
+        const res = orig.apply(target, args);
+        if (res && typeof res.then === "function") {
+          return res.then((val) => {
+            const first = args[0];
+            const admId =
+              typeof first === "string"
+                ? first
+                : first && typeof first === "object"
+                ? first.admision_id || first.atencion_id || first.admision || first.ingreso || first.id
+                : "";
+            if (admId && val && typeof val === "object") {
+              sincronizarSnapshotHoja(admId, val);
+            }
+            return val;
+          });
+        }
+        return res;
+      };
+    }
+  });
+
+  async function leerHojaDirecta(admisionId, signal) {
+    const metodos = ["cargar", "hoja", "obtener", "leer", "estado", "detalle", "resumen", "consultar"];
+    for (const m of metodos) {
+      if (typeof hospitalBase?.[m] === "function") {
+        try {
+          const r = await hospitalBase[m](admisionId, signal);
+          if (r && typeof r === "object") return r;
+        } catch {
+          try {
+            const r2 = await hospitalBase[m]({ admision: admisionId, ingreso: admisionId, id: admisionId }, signal);
+            if (r2 && typeof r2 === "object") return r2;
+          } catch {}
+        }
+      }
+    }
+    return null;
+  }
+
+  // ==========================================================================
+  // CENTRO DE NOTIFICACIONES GLOBAL (HOJA DE HOSPITAL + TERAPIAS)
   // ==========================================================================
   const notificaciones = {
     async listarActivas(signal) {
-      let filas = [];
+      // 1. Leer terapias complementarias y sincronizaciones de Hoja de Hospital
+      let filasExtra = [];
       if (demo) {
-        filas = demoRegistros
-          .filter((r) => r.modulo === "terapia_hosp" || r.modulo === "med_hosp")
+        filasExtra = demoRegistros
+          .filter((r) => ["terapia_hosp", "med_hosp", "hoja_hosp_sync", "hoja_adm_extra"].includes(r.modulo))
           .map((r) => ({ id: r.id, paciente_id: r.paciente_id, modulo: r.modulo, datos: r.datos }));
       } else {
         const url =
           `${config.url}/rest/v1/pibe_registros_extra?` +
-          `modulo=in.(terapia_hosp,med_hosp)&order=creado.desc`;
+          `modulo=in.(terapia_hosp,med_hosp,hoja_hosp_sync,hoja_adm_extra)&order=creado.desc`;
         const res = await fetch(url, {
           method: "GET",
           cache: "no-store",
@@ -285,18 +422,164 @@ function crearRepositorio(config) {
           signal,
           headers: headersSupabase
         });
-        if (!res.ok) return [];
-        filas = await res.json();
+        if (res.ok) {
+          filasExtra = await res.json();
+        }
       }
 
-      return filas
-        .map((f) => ({
-          ...(f.datos || {}),
-          id: f.id,
-          admisionId: f.datos?.admisionId || f.paciente_id,
-          modulo: f.modulo
-        }))
-        .filter((it) => it.activa !== false);
+      // 2. Detectar hospitalizaciones activas y leer sus medicaciones/inyecciones en vivo
+      const mapaHospitalizados = new Map();
+      const hojasEnVivo = [];
+
+      if (demo) {
+        pacientes.forEach((p) => {
+          const ev = eventos.find((e) => e.paciente_id === p.id && e.tipo === "hospitalizacion" && e.abierta);
+          if (ev) {
+            mapaHospitalizados.set(ev.id, {
+              admisionId: ev.id,
+              pacienteId: p.id,
+              pacienteNombre: p.nombre,
+              especie: p.especie,
+              jaula: ev.jaula || ""
+            });
+          }
+        });
+      } else {
+        try {
+          const dir = await rpc("pibe_directorio_identificado", { termino: "", cantidad: 60, desplazamiento: 0 }, signal);
+          await Promise.all(
+            (dir || []).map(async (p) => {
+              try {
+                const evs = await rpc(
+                  "pibe_eventos_identificados",
+                  { paciente: p.id, antes_de: null, antes_id: null },
+                  signal
+                );
+                const evActiva = Array.isArray(evs)
+                  ? evs.find((e) => e.tipo === "hospitalizacion" && e.abierta)
+                  : null;
+                if (evActiva) {
+                  const meta = {
+                    admisionId: evActiva.id,
+                    pacienteId: p.id,
+                    pacienteNombre: p.nombre,
+                    especie: p.especie,
+                    jaula: evActiva.jaula || p.jaula || ""
+                  };
+                  mapaHospitalizados.set(evActiva.id, meta);
+                  const raw = await leerHojaDirecta(evActiva.id, signal);
+                  if (raw) {
+                    hojasEnVivo.push(...convertirPautasHoja(raw, meta));
+                  }
+                }
+              } catch {}
+            })
+          );
+        } catch {}
+      }
+
+      // Administraciones extra registradas desde el Centro de Notificaciones para pautas de hoja
+      const adminsNotifExtra = {};
+      filasExtra
+        .filter((f) => f.modulo === "hoja_adm_extra")
+        .forEach((f) => {
+          const pid = f.datos?.pautaRefId;
+          if (!pid) return;
+          if (!adminsNotifExtra[pid]) adminsNotifExtra[pid] = [];
+          adminsNotifExtra[pid].push({
+            id: f.id,
+            fecha: f.datos?.fecha || "",
+            medico: f.datos?.medico || "Turno clínico",
+            nota: f.datos?.nota || ""
+          });
+        });
+
+      // Combinar pautas de hoja en vivo + sincronizadas + terapias complementarias
+      const unificado = new Map();
+
+      const agregarItem = (it) => {
+        if (!it || it.activa === false) return;
+        const metaHosp = mapaHospitalizados.get(String(it.admisionId)) || {};
+        const extraApps = adminsNotifExtra[it.id] || [];
+        const appsCombinadas = [...extraApps, ...(it.aplicaciones || [])];
+        const appsUnicas = [];
+        const vistos = new Set();
+        appsCombinadas.forEach((ap) => {
+          const key = `${ap.id}|${ap.fecha}`;
+          if (!vistos.has(key)) {
+            vistos.add(key);
+            appsUnicas.push(ap);
+          }
+        });
+
+        unificado.set(it.id, {
+          ...it,
+          pacienteId: it.pacienteId || metaHosp.pacienteId || "",
+          pacienteNombre: it.pacienteNombre || metaHosp.pacienteNombre || "",
+          especie: it.especie || metaHosp.especie || "",
+          jaula: it.jaula || metaHosp.jaula || "",
+          aplicaciones: appsUnicas
+        });
+      };
+
+      // Primero sincronizadas desde pibe_registros_extra
+      filasExtra.forEach((f) => {
+        if (f.modulo === "hoja_hosp_sync") {
+          const metaHosp = mapaHospitalizados.get(String(f.paciente_id)) || { admisionId: f.paciente_id };
+          (f.datos?.pautas || []).forEach((p) => agregarItem({ ...p, ...metaHosp, id: p.id }));
+        } else if (f.modulo === "terapia_hosp" || f.modulo === "med_hosp") {
+          agregarItem({
+            ...(f.datos || {}),
+            id: f.id,
+            admisionId: f.datos?.admisionId || f.paciente_id,
+            modulo: f.modulo
+          });
+        }
+      });
+
+      // Sobrescribir con lectura directa en vivo si está disponible
+      hojasEnVivo.forEach((p) => agregarItem(p));
+
+      return Array.from(unificado.values());
+    },
+
+    async registrarAplicacion(item) {
+      const ahora = fechaLocal(new Date()).replace("T", " ");
+      const nuevoRegistro = { id: uuid(), fecha: ahora, medico: "Turno clínico" };
+
+      if (item.origenHoja) {
+        // Intentar registrar también en hospitalBase si existe un método compatible
+        const metodosAdm = ["administrar", "registrarAdministracion", "guardarAdministracion", "aplicar", "registrarToma"];
+        for (const m of metodosAdm) {
+          if (typeof hospitalBase?.[m] === "function") {
+            try {
+              await hospitalBase[m]({
+                admision_id: item.admisionId,
+                atencion_id: item.admisionId,
+                pauta_id: item.pautaId,
+                fecha_local: fechaLocal(new Date())
+              });
+              break;
+            } catch {}
+          }
+        }
+
+        await modulos.guardar(item.admisionId, "hoja_adm_extra", {
+          id: nuevoRegistro.id,
+          pautaRefId: item.id,
+          pautaId: item.pautaId,
+          fecha: ahora,
+          medico: "Turno clínico"
+        });
+        return nuevoRegistro;
+      }
+
+      const actualizada = {
+        ...item,
+        aplicaciones: [nuevoRegistro, ...(item.aplicaciones || [])]
+      };
+      await modulos.guardar(item.admisionId, item.modulo || "terapia_hosp", actualizada);
+      return nuevoRegistro;
     }
   };
 
@@ -562,7 +845,6 @@ function crearRepositorio(config) {
     }
   };
 
-  const hospital = crearHospital(rpc, demo, eventos, fechaLocal, pacientes);
   return { demo, listar, ficha, expediente, guardarPaciente, guardarAtencion, subir, enlace, hospital, fotos, modulos, notificaciones };
 }
 
