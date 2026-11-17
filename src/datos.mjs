@@ -230,13 +230,12 @@ function crearRepositorio(config) {
     });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
+      const detalle = [e.message, e.details, e.hint].filter(Boolean).join(" · ");
       const legible =
-        e.code === "40001" || e.code === "22023"
-          ? e.message
-          : e.code === "23505"
+        e.code === "23505"
           ? "Ya existe una cédula idéntica o un ingreso activo para este paciente."
-          : e.code === "23514"
-          ? "Revisa los valores del formulario."
+          : detalle
+          ? `${detalle}${e.code ? ` (Código: ${e.code})` : ""}`
           : "No se pudo completar la operación. Revisa la conexión e inténtalo de nuevo.";
       throw fallo(legible, e.code);
     }
@@ -759,7 +758,6 @@ function crearRepositorio(config) {
       return true;
     }
 
-    // 1. Obtener expediente completo si no vinieron atenciones/anexos
     let listaAtenciones = atenciones;
     let listaAnexos = anexos;
     let fotoId = null;
@@ -771,7 +769,6 @@ function crearRepositorio(config) {
       if (!listaAnexos.length && exp?.anexos) listaAnexos = exp.anexos;
     } catch {}
 
-    // 2. Eliminar foto de perfil y todos los exámenes/archivos en Google Drive
     const promesasDrive = [];
     if (fotoId && String(fotoId).startsWith("drive:")) {
       promesasDrive.push(eliminarDesdeDrive(fotoId));
@@ -784,7 +781,6 @@ function crearRepositorio(config) {
     }
     await Promise.all(promesasDrive);
 
-    // 3. Limpiar registros asociados en pibe_registros_extra (paciente, visitas, anexos y foto)
     const parentIds = [pid, ...listaAtenciones.map((a) => String(a.id))];
     const inParents = parentIds.map((v) => encodeURIComponent(v)).join(",");
     await fetch(`${config.url}/rest/v1/pibe_registros_extra?paciente_id=in.(${inParents})`, {
@@ -799,12 +795,10 @@ function crearRepositorio(config) {
       await modulos.eliminar(an.id).catch(() => null);
     }
 
-    // 4. Eliminar ficha del paciente en Supabase (vía RPC SECURITY DEFINER)
     try {
       await rpc("pibe_eliminar_paciente", { paciente: pid });
       return true;
     } catch (errRpc) {
-      // Respaldo por REST verificando que realmente se haya borrado al menos 1 fila
       const resPac = await fetch(`${config.url}/rest/v1/pibe_pacientes?id=eq.${encodeURIComponent(pid)}`, {
         method: "DELETE",
         headers: { ...headersSupabase, Prefer: "return=representation" }
@@ -818,47 +812,30 @@ function crearRepositorio(config) {
       }
       return true;
     }
-    // Respaldo por REST si no está creada la RPC pibe_eliminar_paciente
-    for (const an of listaAnexos) {
-      await fetch(`${config.url}/rest/v1/pibe_examenes?id=eq.${encodeURIComponent(String(an.id))}`, {
-        method: "DELETE",
-        headers: headersSupabase
-      }).catch(() => null);
-    }
-    await fetch(`${config.url}/rest/v1/pibe_atenciones?paciente_id=eq.${encodeURIComponent(pid)}`, {
-      method: "DELETE",
-      headers: headersSupabase
-    }).catch(() => null);
-
-    const resPac = await fetch(`${config.url}/rest/v1/pibe_pacientes?id=eq.${encodeURIComponent(pid)}`, {
-      method: "DELETE",
-      headers: { ...headersSupabase, Prefer: "return=representation" }
-    });
-
-    if (!resPac.ok) {
-      throw Error(
-        "No se pudo borrar el paciente de la base de datos. Ejecuta el SQL de pibe_eliminar_paciente en Supabase."
-      );
-    }
-
-    return true;
   }
 
   async function guardarAtencion(d) {
-    if (!demo) return rpc("pibe_guardar_atencion", { datos: d });
-    const a = eventos.find((x) => x.id === d.id && x.paciente_id === d.paciente_id);
-    if (a && !d.version) return a.id;
-    if (d.version && a?.version !== d.version) throw fallo("La atención cambió. Actualiza antes de guardar.", "40001");
-    if (d.abierta && eventos.some((x) => x.id !== d.id && x.paciente_id === d.paciente_id && x.abierta))
+    const payload =
+      d.tipo === "hospitalizacion" && Object.hasOwn(d, "jaula")
+        ? { ...d, jaula: normalizarJaula(d.jaula) }
+        : d;
+
+    if (!demo) return rpc("pibe_guardar_atencion", { datos: payload });
+    const a = eventos.find((x) => x.id === payload.id && x.paciente_id === payload.paciente_id);
+    if (a && !payload.version) return a.id;
+    if (payload.version && a?.version !== payload.version)
+      throw fallo("La atención cambió. Actualiza antes de guardar.", "40001");
+    if (payload.abierta && eventos.some((x) => x.id !== payload.id && x.paciente_id === payload.paciente_id && x.abierta))
       throw fallo("Ya hay una hospitalización activa.", "23505");
-    const jaula = d.tipo === "hospitalizacion" ? normalizarJaula(Object.hasOwn(d, "jaula") ? d.jaula : a?.jaula) : null;
-    hospital.validarEdicion(a, d);
+    const jaula =
+      payload.tipo === "hospitalizacion" ? normalizarJaula(Object.hasOwn(payload, "jaula") ? payload.jaula : a?.jaula) : null;
+    hospital.validarEdicion(a, payload);
     const nuevo = {
-      ...d,
+      ...payload,
       jaula,
-      inicio: new Date(d.fecha_local + ":00-05:00").toISOString(),
+      inicio: new Date(payload.fecha_local + ":00-05:00").toISOString(),
       version: (a?.version || 0) + 1,
-      peso: d.peso === "" ? null : Number(d.peso)
+      peso: payload.peso === "" ? null : Number(payload.peso)
     };
     if (a) Object.assign(a, nuevo);
     else eventos.push(nuevo);
@@ -929,7 +906,6 @@ function crearRepositorio(config) {
       );
     }
 
-    // 1. Obtener directorio de pacientes y anexos en pibe_registros_extra
     const [dir, resDrive] = await Promise.all([
       rpc("pibe_directorio_identificado", { termino: "", cantidad: 200, desplazamiento: 0 }, signal).catch(() => []),
       fetch(`${config.url}/rest/v1/pibe_registros_extra?modulo=eq.drive_anexo&order=creado.desc`, {
@@ -944,7 +920,6 @@ function crearRepositorio(config) {
     const filasDrive = resDrive && resDrive.ok ? await resDrive.json().catch(() => []) : [];
     const mapaDocs = new Map();
 
-    // Indexar documentos subidos a Drive
     for (const f of filasDrive) {
       const datos = f.datos || {};
       mapaDocs.set(f.id, {
@@ -957,7 +932,6 @@ function crearRepositorio(config) {
       });
     }
 
-    // Asociar cada documento con su paciente y sumar exámenes remotos de Supabase
     await Promise.all(
       (dir || []).map(async (p) => {
         try {
