@@ -2079,29 +2079,32 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
               Agregar insumo o medicina frecuente en 1 toque (+1 unid / +1 ml):
             </span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-              {INSUMOS_FRECUENTES.map((ins) => (
-                <button
-                  key={ins.nombre}
-                  type="button"
-                  onClick={() => agregarInsumoRapido(ins)}
-                  style={{
-                    padding: "0.32rem 0.65rem",
-                    borderRadius: "999px",
-                    border: "1px solid #94a3b8",
-                    background: "#ffffff",
-                    color: "#0f172a",
-                    fontSize: "0.8rem",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.25rem"
-                  }}
-                >
-                  <Plus size={13} color="#0284c7" />
-                  {ins.nombre}
-                </button>
-              ))}
+              {INSUMOS_FRECUENTES.map((ins) => {
+                const esMedicina = ins.tipoItem === "Medicina";
+                return (
+                  <button
+                    key={ins.nombre}
+                    type="button"
+                    onClick={() => agregarInsumoRapido(ins)}
+                    style={{
+                      padding: "0.32rem 0.65rem",
+                      borderRadius: "999px",
+                      border: `1px solid ${esMedicina ? "#5eead4" : "#94a3b8"}`,
+                      background: esMedicina ? "#f0fdfa" : "#ffffff",
+                      color: esMedicina ? "#115e59" : "#0f172a",
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.25rem"
+                    }}
+                  >
+                    <Plus size={13} color={esMedicina ? "#0f766e" : "#0284c7"} />
+                    {ins.nombre}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -4010,4 +4013,100 @@ export default function App() {
                   )}
                 </section>
 
-                {/* Pestaña / Panel de Banco de
+                <BancoDocumentos
+                  pacientesLista={resultado.items}
+                  revision={rev}
+                  onSeleccionarPaciente={(pacId) => seleccionar(pacId)}
+                />
+              </div>
+
+              {ficha ? (
+                <Historia
+                  ficha={ficha}
+                  abrir={M}
+                  ingresoId={ingresoId}
+                  verIngreso={VerIngreso}
+                  volver={() => seleccionar("")}
+                  revision={rev}
+                  recargar={recargar}
+                  onSyncHosp={actualizarHospPaciente}
+                  onCambioNotificaciones={() => cargarDatosHospital()}
+                  pestanaInicial={pestanaHistoria}
+                  onAltaSuccess={(pid, msg) => {
+                    actualizarHospPaciente(pid, { activa: false });
+                    A(msg);
+                    recargar();
+                  }}
+                  onPacienteEliminado={(pid, nombreEliminado) => {
+                    Id("");
+                    F(null);
+                    VerIngreso("");
+                    A(`Paciente "${nombreEliminado}" y todos sus archivos fueron eliminados definitivamente.`);
+                    recargar();
+                  }}
+                />
+              ) : (
+                <section className="ve-panel ve-empty" aria-live="polite">
+                  {errFicha ? (
+                    <>
+                      <strong>No se pudo abrir la ficha</strong>
+                      <span>{errFicha}</span>
+                      <Boton onClick={recargar}>Reintentar</Boton>
+                    </>
+                  ) : (
+                    <>
+                      <FolderOpen size={30} />
+                      <strong>{id ? "Abriendo ficha…" : "Selecciona un paciente"}</strong>
+                      <span>
+                        {id
+                          ? "Cargando historia clínica."
+                          : "Elige una mascota de la lista o abre una nueva ficha desde Nuevo paciente."}
+                      </span>
+                    </>
+                  )}
+                </section>
+              )}
+            </div>
+          </>
+        )}
+      </main>
+
+      {modal &&
+        (modal.clase === "foto" ? (
+          <EditorFoto
+            paciente={modal.d}
+            fotoActual={modal.fotoActual}
+            fotos={repo.fotos}
+            cerrar={() => M(null)}
+            guardada={(pid, msg, nuevaFotoId) => {
+              if (nuevaFotoId) {
+                setFotosMapa((prev) => ({ ...prev, [pid]: nuevaFotoId }));
+              }
+              guardar(pid, msg);
+            }}
+          />
+        ) : (
+          <Formulario modelo={modal} cerrar={() => M(null)} guardado={guardar} recargar={recargar} />
+        ))}
+
+      {abrirNotif && (
+        <ModalCentroNotificaciones
+          pendientes={pendientes3Horas}
+          pacientesLista={resultado.items}
+          cerrar={() => setAbrirNotif(false)}
+          onIrAPaciente={(pacId, admId) => abrirHojaDesdeSala(pacId, admId)}
+          onRefrescar={() => cargarDatosHospital()}
+          cargando={cargaNotif}
+        />
+      )}
+
+      {calcRapidaAbierta && (
+        <CalculadoraFluidoterapia
+          paciente={ficha?.p || null}
+          pesoInicial={ficha?.atenciones?.find((a) => a.peso != null)?.peso ?? ""}
+          cerrar={() => setCalcRapidaAbierta(false)}
+        />
+      )}
+    </div>
+  );
+}
