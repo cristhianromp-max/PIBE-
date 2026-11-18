@@ -29,6 +29,24 @@ const VIAS_ADMINISTRACION = [
   "vía intranasal"
 ];
 
+const MEDICAMENTOS_RAPIDOS_RECETA = [
+  { nombre: "Doxi 200", via: "vía oral" },
+  { nombre: "Doxi 100", via: "vía oral" },
+  { nombre: "Quercetol 100 MG", via: "vía oral" },
+  { nombre: "Diagel", via: "vía oral" },
+  { nombre: "Hepamerz", via: "vía oral" },
+  { nombre: "Clamox", via: "vía oral" },
+  { nombre: "Previcox", via: "vía oral" },
+  { nombre: "Meloxicam", via: "vía oral" },
+  { nombre: "Sponge clean", via: "vía tópica" },
+  { nombre: "Spectryl 20", via: "vía tópica" },
+  { nombre: "Spectryl 10", via: "vía tópica" },
+  { nombre: "Liv 52", via: "vía oral" },
+  { nombre: "Carminal", via: "vía oral" },
+  { nombre: "Anti hemok", via: "vía oral" },
+  { nombre: "Neumoflogin", via: "vía oral" }
+];
+
 function crearFilaReceta() {
   return {
     id: uuid(),
@@ -502,6 +520,31 @@ export function ModalDocumentosClinicos({
     setFilasRx((prev) =>
       prev.map((f) => (f.id === id ? { ...f, [campo]: valor } : f))
     );
+  }
+
+  function agregarMedicamentoRapidoRx(med) {
+    setFilasRx((prev) => {
+      const idxVacia = prev.findIndex((f) => !f.medicamento.trim());
+      if (idxVacia !== -1) {
+        return prev.map((f, idx) =>
+          idx === idxVacia
+            ? {
+                ...f,
+                medicamento: med.nombre,
+                via: med.via || f.via || "vía oral"
+              }
+            : f
+        );
+      }
+      return [
+        ...prev,
+        {
+          ...crearFilaReceta(),
+          medicamento: med.nombre,
+          via: med.via || "vía oral"
+        }
+      ];
+    });
   }
 
   function agregarFilaRx() {
@@ -1013,6 +1056,47 @@ export function ModalDocumentosClinicos({
 
           {tipoDoc === "receta" ? (
             <div style={{ marginTop: "0.85rem", display: "grid", gap: "0.85rem" }}>
+              {/* Opciones rápidas de medicamentos frecuentes */}
+              <div
+                style={{
+                  background: "#f0fdfa",
+                  border: "1px solid #5eead4",
+                  borderRadius: "10px",
+                  padding: "0.6rem 0.75rem",
+                  display: "grid",
+                  gap: "0.45rem"
+                }}
+              >
+                <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#115e59", textTransform: "uppercase" }}>
+                  Agregar medicamento frecuente en 1 toque:
+                </span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                  {MEDICAMENTOS_RAPIDOS_RECETA.map((med) => (
+                    <button
+                      key={med.nombre}
+                      type="button"
+                      onClick={() => agregarMedicamentoRapidoRx(med)}
+                      style={{
+                        padding: "0.32rem 0.65rem",
+                        borderRadius: "999px",
+                        border: "1px solid #2dd4bf",
+                        background: "#ffffff",
+                        color: "#115e59",
+                        fontSize: "0.8rem",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.25rem"
+                      }}
+                    >
+                      <Plus size={13} color="#0f766e" />
+                      {med.nombre}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div style={{ overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: "10px" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.83rem" }}>
                   <thead>
