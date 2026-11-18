@@ -1764,7 +1764,7 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
     setFilasTabla((prev) => prev.map((f) => (f.id === filaId ? { ...f, [campo]: valor } : f)));
   }
 
-function agregarInsumoRapido(insumo) {
+  function agregarInsumoRapido(insumo) {
     const unidadDefecto = insumo.unidad || "unid";
     setFilasTabla((prev) => {
       const idxExistente = prev.findIndex(
@@ -1807,35 +1807,6 @@ function agregarInsumoRapido(insumo) {
           tipoItem: insumo.tipoItem,
           descripcion: insumo.nombre,
           cantidad: `1 ${unidadDefecto}`,
-          nota: ""
-        }
-      ];
-    });
-  }
-
-      const idxVacia = prev.findIndex(
-        (f) => !f.descripcion.trim() && !f.cantidad.trim()
-      );
-      if (idxVacia !== -1) {
-        return prev.map((f, idx) =>
-          idx === idxVacia
-            ? {
-                ...f,
-                tipoItem: insumo.tipoItem,
-                descripcion: insumo.nombre,
-                cantidad: "1 unid"
-              }
-            : f
-        );
-      }
-
-      return [
-        ...prev,
-        {
-          id: uuid(),
-          tipoItem: insumo.tipoItem,
-          descripcion: insumo.nombre,
-          cantidad: "1 unid",
           nota: ""
         }
       ];
@@ -2093,7 +2064,7 @@ function agregarInsumoRapido(insumo) {
             </div>
           </div>
 
-          {/* Botones rápidos de insumos frecuentes */}
+          {/* Botones rápidos de insumos y medicinas frecuentes */}
           <div
             style={{
               background: "#f8fafc",
@@ -2105,7 +2076,7 @@ function agregarInsumoRapido(insumo) {
             }}
           >
             <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#475569", textTransform: "uppercase" }}>
-              Agregar insumo frecuente en 1 toque (+1 unid):
+              Agregar insumo o medicina frecuente en 1 toque (+1 unid / +1 ml):
             </span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
               {INSUMOS_FRECUENTES.map((ins) => (
@@ -4039,109 +4010,4 @@ export default function App() {
                   )}
                 </section>
 
-                {/* Pestaña / Panel de Banco de Documentos debajo de Pacientes */}
-                <BancoDocumentos
-                  pacientesLista={resultado.items}
-                  revision={rev}
-                  onSeleccionarPaciente={(pacId) => seleccionar(pacId)}
-                />
-              </div>
-
-              {id && ficha?.p?.id === id ? (
-                <Historia
-                  key={id}
-                  ficha={ficha}
-                  abrir={M}
-                  ingresoId={ingresoId}
-                  verIngreso={VerIngreso}
-                  revision={rev}
-                  recargar={recargar}
-                  volver={() => seleccionar("")}
-                  pestanaInicial={pestanaHistoria}
-                  onSyncHosp={actualizarHospPaciente}
-                  onCambioNotificaciones={() => cargarDatosHospital()}
-                  onAltaSuccess={(pid, msg) => {
-                    actualizarHospPaciente(pid, { activa: false });
-                    A(msg);
-                    recargar();
-                  }}
-                  onPacienteEliminado={(pid, nombreEliminado) => {
-                    VerIngreso("");
-                    F(null);
-                    EF("");
-                    Id("");
-                    R((prev) => ({
-                      ...prev,
-                      items: prev.items.filter((item) => item.id !== pid)
-                    }));
-                    setHospMapa((prev) => {
-                      const copia = { ...prev };
-                      delete copia[pid];
-                      return copia;
-                    });
-                    setFotosMapa((prev) => {
-                      const copia = { ...prev };
-                      delete copia[pid];
-                      return copia;
-                    });
-                    setPautasActivas((prev) => prev.filter((item) => item.pacienteId !== pid));
-                    setSalaHospital((prev) => prev.filter((item) => item.pac.id !== pid));
-                    A(`Paciente "${nombreEliminado}" y todos sus exámenes fueron eliminados definitivamente.`);
-                    recargar();
-                  }}
-                />
-              ) : (
-                <div className="ve-paper">
-                  <div className="ve-panel ve-empty">
-                    <FolderOpen size={26} />
-                    <h2>{errFicha || (!id ? "Selecciona un paciente" : "Cargando ficha…")}</h2>
-                    {!id && <span>Su historia aparecerá aquí.</span>}
-                    {errFicha && (
-                      <>
-                        <Boton onClick={recargar}>Reintentar</Boton>
-                        <Boton onClick={() => seleccionar("")}>Volver</Boton>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </main>
-
-      {calcRapidaAbierta && (
-        <CalculadoraFluidoterapia cerrar={() => setCalcRapidaAbierta(false)} />
-      )}
-
-      {abrirNotif && (
-        <ModalCentroNotificaciones
-          pendientes={pendientes3Horas}
-          pacientesLista={resultado.items}
-          cerrar={() => setAbrirNotif(false)}
-          onRefrescar={() => cargarDatosHospital()}
-          cargando={cargaNotif}
-          onIrAPaciente={(pacId, admId) => abrirHojaDesdeSala(pacId, admId)}
-        />
-      )}
-
-      {modal?.clase === "foto" ? (
-        <EditorFoto
-          paciente={modal.d}
-          fotoActual={modal.fotoActual}
-          fotos={repo.fotos}
-          cerrar={() => M(null)}
-          recargar={recargar}
-          guardado={(fotoId) => {
-            const pid = modal.d.id;
-            setFotosMapa((prev) => ({ ...prev, [pid]: fotoId }));
-            F((prev) => (prev?.p.id === pid ? { ...prev, p: { ...prev.p, foto_id: fotoId } } : prev));
-            guardar(pid, "Foto de identificación guardada.");
-          }}
-        />
-      ) : (
-        modal && <Formulario modelo={modal} cerrar={() => M(null)} guardado={guardar} recargar={recargar} />
-      )}
-    </div>
-  );
-}
+                {/* Pestaña / Panel de Banco de
