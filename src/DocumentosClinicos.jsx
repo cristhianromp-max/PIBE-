@@ -1,1370 +1,375 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
-import {
-  Printer,
-  MessageCircle,
-  FileText,
-  Scissors,
-  Activity,
-  Plus,
-  X,
-  Copy,
-  Check,
-  Download,
-  ExternalLink,
-  Pencil,
-  Trash2,
-  CloudUpload
-} from "lucide-react";
-import { Boton } from "./Campos.jsx";
+import React, { useEffect, useState, useRef, useCallback } from "react";
+import { Plus, Trash2, Printer, FileText, X } from "lucide-react";
 import { fechaCorta, fechaLocal, edad, uuid } from "./datos.mjs";
+import { marca } from "./config";
+import { Boton } from "./Campos.jsx";
 
-const VIAS_ADMINISTRACION = [
-  "vía oral",
-  "vía tópica",
-  "vía oftálmica",
-  "vía ótica",
-  "vía subcutánea",
-  "vía intramuscular",
-  "vía intranasal"
+export const RECETAS_RAPIDAS = [
+  { nombre: "Doxi 200", dosis: "1 comp", frecuencia: "Cada 24h", duracion: "14 días" },
+  { nombre: "Doxi 100", dosis: "1 comp", frecuencia: "Cada 24h", duracion: "14 días" },
+  { nombre: "Quercetol 100 MG", dosis: "1 comp", frecuencia: "Cada 12h", duracion: "5 días" },
+  { nombre: "Diagel", dosis: "", frecuencia: "Cada 12h", duracion: "5 días" },
+  { nombre: "Hepamerz", dosis: "", frecuencia: "Cada 12h", duracion: "15 días" },
+  { nombre: "Clamox", dosis: "", frecuencia: "Cada 12h", duracion: "7 días" },
+  { nombre: "Previcox", dosis: "", frecuencia: "Cada 24h", duracion: "5 días" },
+  { nombre: "Meloxicam", dosis: "", frecuencia: "Cada 24h", duracion: "3 días" },
+  { nombre: "Sponge clean", dosis: "Aplicar tópico", frecuencia: "Cada 12h", duracion: "7 días" },
+  { nombre: "Spectryl 20", dosis: "1 pipeta", frecuencia: "Dosis única", duracion: "1 día" },
+  { nombre: "Spectryl 10", dosis: "1 pipeta", frecuencia: "Dosis única", duracion: "1 día" },
+  { nombre: "Liv 52", dosis: "", frecuencia: "Cada 12h", duracion: "15 días" },
+  { nombre: "Carminal", dosis: "", frecuencia: "Cada 12h", duracion: "7 días" },
+  { nombre: "Anti hemok", dosis: "", frecuencia: "Cada 12h", duracion: "5 días" },
+  { nombre: "Neumoflogin", dosis: "", frecuencia: "Cada 12h", duracion: "7 días" }
 ];
 
-const FRECUENCIAS_RECETA = [
-  "24 horas",
-  "12 horas",
-  "10 horas",
-  "8 horas",
-  "4 horas",
-  "2 horas"
-];
-
-function crearFilaReceta() {
-  return {
-    id: uuid(),
-    medicamento: "",
-    cantidadTotal: "",
-    via: "vía oral",
-    dosis: "",
-    frecuencia: "",
-    duracion: ""
-  };
+function crearFilasReceta() {
+  return [{ id: uuid(), medicamento: "", dosis: "", frecuencia: "", duracion: "" }];
 }
 
-function obtenerEnlaceWhatsApp(telefono, texto) {
-  const digitos = String(telefono || "").replace(/\D/g, "");
-  if (!digitos) return "";
-  let numero = digitos;
-  if (digitos.startsWith("09") && digitos.length === 10) {
-    numero = `593${digitos.slice(1)}`;
-  } else if (digitos.startsWith("9") && digitos.length === 9) {
-    numero = `593${digitos}`;
-  }
-  return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
-}
-
-// ============================================================================
-// LOGO VECTORIAL OFICIAL: CLÍNICA VETERINARIA EL PIBE
-// ============================================================================
-export function LogoClinicaElPibe({ ancho = 210 }) {
-  return (
-    <svg
-      width={ancho}
-      viewBox="0 0 300 132"
-      xmlns="http://www.w3.org/2000/svg"
-      role="img"
-      aria-label="Clínica Veterinaria El Pibe"
-      style={{ display: "block", maxWidth: "100%", height: "auto" }}
-    >
-      <circle cx="66" cy="40" r="25" fill="none" stroke="#222222" strokeWidth="4.5" />
-      <rect x="61.5" y="26" width="9" height="28" rx="1.5" fill="#222222" />
-      <rect x="52" y="35.5" width="28" height="9" rx="1.5" fill="#222222" />
-
-      <circle cx="150" cy="40" r="25" fill="none" stroke="#d92b2b" strokeWidth="4.5" />
-      <g fill="#222222">
-        <path d="M150 40.5c-5.5 0-10.5 4.2-10.5 8.5 0 2.5 2.1 4.2 4.8 4.2 2.1 0 3.7-.9 5.7-.9s3.6.9 5.7.9c2.7 0 4.8-1.7 4.8-4.2 0-4.3-5-8.5-10.5-8.5z" />
-        <ellipse cx="138.5" cy="36.5" rx="2.7" ry="3.8" transform="rotate(-22 138.5 36.5)" />
-        <ellipse cx="145.5" cy="30.5" rx="2.8" ry="4.1" transform="rotate(-8 145.5 30.5)" />
-        <ellipse cx="154.5" cy="30.5" rx="2.8" ry="4.1" transform="rotate(8 154.5 30.5)" />
-        <ellipse cx="161.5" cy="36.5" rx="2.7" ry="3.8" transform="rotate(22 161.5 36.5)" />
-      </g>
-
-      <circle cx="234" cy="40" r="25" fill="none" stroke="#64c7d6" strokeWidth="4.5" />
-      <polyline
-        points="213,41 222,41 225,45 230,27 236,52 241,36 244,41 255,41"
-        fill="none"
-        stroke="#222222"
-        strokeWidth="3.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-
-      <text
-        x="150"
-        y="94"
-        textAnchor="middle"
-        fill="#222222"
-        fontFamily="Georgia, 'Times New Roman', serif"
-        fontWeight="700"
-        fontSize="19.5"
-        letterSpacing="0.6"
-      >
-        CLÍNICA VETERINARIA
-      </text>
-      <text
-        x="150"
-        y="118"
-        textAnchor="middle"
-        fill="#222222"
-        fontFamily="Georgia, 'Times New Roman', serif"
-        fontWeight="700"
-        fontSize="20.5"
-        letterSpacing="1"
-      >
-        EL PIBE
-      </text>
-    </svg>
-  );
-}
-
-// ============================================================================
-// FORMATEADOR DE LÍNEAS DE RECETA
-// ============================================================================
-export function formatearItemReceta(item) {
-  const med = (item.medicamento || "").trim();
-  const cantLimpia = (item.cantidadTotal || "").trim().replace(/^#+\s*/, "");
-  const encabezado = cantLimpia ? `${med} #${cantLimpia}` : med;
-
-  const partesIndicacion = [];
-  if (item.via?.trim()) partesIndicacion.push(item.via.trim());
-  if (item.dosis?.trim()) partesIndicacion.push(item.dosis.trim());
-  if (item.frecuencia?.trim()) {
-    const freq = item.frecuencia.trim();
-    partesIndicacion.push(/^cada\b/i.test(freq) ? freq : `cada ${freq}`);
-  }
-  if (item.duracion !== undefined && String(item.duracion).trim() !== "") {
-    const soloNumero = String(item.duracion).trim().replace(/\D/g, "");
-    if (soloNumero) {
-      partesIndicacion.push(`durante ${soloNumero} ${soloNumero === "1" ? "día" : "días"}`);
-    } else {
-      const dur = String(item.duracion).trim();
-      partesIndicacion.push(/^(durante|por)\b/i.test(dur) ? dur : `durante ${dur}`);
-    }
-  }
-
-  const instruccion =
-    partesIndicacion.length > 0 ? `Administrar ${partesIndicacion.join(" ")}.` : "";
-
-  return { encabezado, instruccion };
-}
-
-// ============================================================================
-// GENERADOR NATIVO DE ARCHIVO PDF REAL (SIN DEPENDENCIAS EXTERNAS)
-// ============================================================================
-const MAPA_WINANSI = {
-  "€": 0x80, "–": 0x96, "—": 0x97, "¡": 0xa1, "°": 0xb0, "·": 0xb7, "º": 0xba, "¿": 0xbf,
-  "Á": 0xc1, "É": 0xc9, "Í": 0xcd, "Ñ": 0xd1, "Ó": 0xd3, "Ú": 0xda, "Ü": 0xdc,
-  "á": 0xe1, "é": 0xe9, "í": 0xed, "ñ": 0xf1, "ó": 0xf3, "ú": 0xfa, "ü": 0xfc
-};
-
-function textoPdfSeguro(str) {
-  let out = "";
-  for (const ch of String(str || "")) {
-    const code = ch.charCodeAt(0);
-    if (ch === "(" || ch === ")" || ch === "\\") {
-      out += "\\" + ch;
-    } else if (code >= 32 && code <= 126) {
-      out += ch;
-    } else if (MAPA_WINANSI[ch] !== undefined) {
-      out += "\\" + MAPA_WINANSI[ch].toString(8).padStart(3, "0");
-    } else {
-      const sinAcento = ch.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      out += sinAcento && sinAcento.charCodeAt(0) <= 126 ? sinAcento : "?";
-    }
-  }
-  return out;
-}
-
-function dividirLineasPdf(texto, maxChars) {
-  const parrafos = String(texto || "").split(/\r?\n/);
-  const resultado = [];
-  for (const parrafo of parrafos) {
-    const palabras = parrafo.trim().split(/\s+/).filter(Boolean);
-    if (palabras.length === 0) {
-      resultado.push("");
-      continue;
-    }
-    let lineaActual = "";
-    for (const palabra of palabras) {
-      if (!lineaActual) {
-        lineaActual = palabra;
-      } else if (lineaActual.length + 1 + palabra.length <= maxChars) {
-        lineaActual += " " + palabra;
-      } else {
-        resultado.push(lineaActual);
-        lineaActual = palabra;
-      }
-    }
-    if (lineaActual) resultado.push(lineaActual);
-  }
-  return resultado;
-}
-
-function dibujarLogoEnPdf(ops, x0, yTop) {
-  const r = 14;
-  const cy = yTop - 16;
-  const c1x = x0 + 22;
-  const c2x = x0 + 66;
-  const c3x = x0 + 110;
-  const k = 0.55228475 * r;
-
-  const circulo = (cx, colorRgb) => {
-    ops.push(`${colorRgb} RG 2 w`);
-    ops.push(`${(cx + r).toFixed(2)} ${cy.toFixed(2)} m`);
-    ops.push(`${(cx + r).toFixed(2)} ${(cy + k).toFixed(2)} ${(cx + k).toFixed(2)} ${(cy + r).toFixed(2)} ${cx.toFixed(2)} ${(cy + r).toFixed(2)} c`);
-    ops.push(`${(cx - k).toFixed(2)} ${(cy + r).toFixed(2)} ${(cx - r).toFixed(2)} ${(cy + k).toFixed(2)} ${(cx - r).toFixed(2)} ${cy.toFixed(2)} c`);
-    ops.push(`${(cx - r).toFixed(2)} ${(cy - k).toFixed(2)} ${(cx - k).toFixed(2)} ${(cy - r).toFixed(2)} ${cx.toFixed(2)} ${(cy - r).toFixed(2)} c`);
-    ops.push(`${(cx + k).toFixed(2)} ${(cy - r).toFixed(2)} ${(cx + r).toFixed(2)} ${(cy - k).toFixed(2)} ${(cx + r).toFixed(2)} ${cy.toFixed(2)} c S`);
-  };
-
-  circulo(c1x, "0.13 0.13 0.13");
-  ops.push(`0.13 0.13 0.13 rg`);
-  ops.push(`${(c1x - 2.3).toFixed(2)} ${(cy - 7).toFixed(2)} 4.6 14 re f`);
-  ops.push(`${(c1x - 7).toFixed(2)} ${(cy - 2.3).toFixed(2)} 14 4.6 re f`);
-
-  circulo(c2x, "0.85 0.17 0.17");
-  ops.push(`0.13 0.13 0.13 rg`);
-  ops.push(`${(c2x - 4.5).toFixed(2)} ${(cy - 5.5).toFixed(2)} 9 5.5 re f`);
-  ops.push(`${(c2x - 6.5).toFixed(2)} ${(cy + 1).toFixed(2)} 2.5 3 re f`);
-  ops.push(`${(c2x - 3).toFixed(2)} ${(cy + 3.2).toFixed(2)} 2.5 3.3 re f`);
-  ops.push(`${(c2x + 0.5).toFixed(2)} ${(cy + 3.2).toFixed(2)} 2.5 3.3 re f`);
-  ops.push(`${(c2x + 4).toFixed(2)} ${(cy + 1).toFixed(2)} 2.5 3 re f`);
-
-  circulo(c3x, "0.39 0.78 0.84");
-  ops.push(`0.13 0.13 0.13 RG 1.7 w`);
-  ops.push(`${(c3x - 10).toFixed(2)} ${cy.toFixed(2)} m`);
-  ops.push(`${(c3x - 5.5).toFixed(2)} ${cy.toFixed(2)} l`);
-  ops.push(`${(c3x - 3.8).toFixed(2)} ${(cy - 2.5).toFixed(2)} l`);
-  ops.push(`${(c3x - 1.2).toFixed(2)} ${(cy + 7.5).toFixed(2)} l`);
-  ops.push(`${(c3x + 1.8).toFixed(2)} ${(cy - 7.5).toFixed(2)} l`);
-  ops.push(`${(c3x + 4.2).toFixed(2)} ${(cy + 2.5).toFixed(2)} l`);
-  ops.push(`${(c3x + 6).toFixed(2)} ${cy.toFixed(2)} l`);
-  ops.push(`${(c3x + 10).toFixed(2)} ${cy.toFixed(2)} l S`);
-
-  ops.push(`0.13 0.13 0.13 rg`);
-  ops.push(`BT /F3 10.5 Tf ${(x0 + 4).toFixed(2)} ${(yTop - 44).toFixed(2)} Td (CL\\315NICA VETERINARIA) Tj ET`);
-  ops.push(`BT /F3 11.5 Tf ${(x0 + 42).toFixed(2)} ${(yTop - 57).toFixed(2)} Td (EL PIBE) Tj ET`);
-}
-
-export function generarArchivoPdfReceta({
-  paciente,
-  ultimoPeso,
-  medico,
-  registroProf,
-  fechaEmision,
-  items,
-  indicacionesGenerales,
-  proximoControl
-}) {
-  const paginas = [];
-  let ops = [];
-
-  const escribirTexto = (fontKey, size, x, y, texto, rgb = "0.07 0.09 0.15") => {
-    ops.push(`${rgb} rg BT ${fontKey} ${size} Tf ${x.toFixed(2)} ${y.toFixed(2)} Td (${textoPdfSeguro(texto)}) Tj ET`);
-  };
-
-  const iniciarPagina = (esPrimera) => {
-    ops = [];
-    if (esPrimera) {
-      dibujarLogoEnPdf(ops, 42, 804);
-
-      escribirTexto("/F2", 14, 345, 788, "RECETA M\\311DICA", "0.06 0.09 0.16");
-      escribirTexto("/F1", 9.5, 345, 772, `Fecha: ${fechaCorta(fechaEmision)}`);
-      escribirTexto("/F1", 9.5, 345, 758, `Historia N.º: ${paciente.codigo || "S/N"}`);
-      escribirTexto("/F2", 9.5, 345, 744, `Médico: ${medico || "Médico Veterinario"}`);
-
-      ops.push(`0.12 0.16 0.23 RG 1.4 w 42 732 m 553 732 l S`);
-
-      ops.push(`0.97 0.98 0.99 rg 42 666 511 58 re f`);
-      ops.push(`0.80 0.84 0.88 RG 0.8 w 42 666 511 58 re S`);
-      ops.push(`42 705 m 553 705 l S`);
-      ops.push(`42 686 m 553 686 l S`);
-      ops.push(`298 666 m 298 724 l S`);
-
-      escribirTexto("/F2", 9, 48, 711, `Paciente: ${paciente.nombre}`);
-      escribirTexto("/F2", 9, 304, 711, `Propietario: ${paciente.propietario}`);
-
-      const espRaza = `${paciente.especie || ""}${paciente.raza ? ` · ${paciente.raza}` : ""}`;
-      escribirTexto("/F1", 9, 48, 692, `Especie / Raza: ${espRaza}`);
-      escribirTexto("/F1", 9, 304, 692, `Cédula: ${paciente.cedula || "Sin registrar"}`);
-
-      const datosExtra = [
-        paciente.sexo,
-        edad(paciente.nacimiento, paciente.edad_estimada),
-        ultimoPeso != null ? `${Number(ultimoPeso).toLocaleString("es-EC")} kg` : ""
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      escribirTexto("/F1", 9, 48, 673, `Datos: ${datosExtra || "Sin registrar"}`);
-      escribirTexto("/F1", 9, 304, 673, `Teléfono: ${paciente.telefono || "Sin registrar"}`);
-
-      escribirTexto("/F2", 11.5, 42, 644, "Rp / Prescripción:", "0.06 0.09 0.16");
-      ops.push(`0.85 0.88 0.92 RG 0.8 w 42 638 m 553 638 l S`);
-      return 618;
-    } else {
-      escribirTexto("/F2", 10, 42, 795, `RECETA MÉDICA (Continuación) · Paciente: ${paciente.nombre}`);
-      ops.push(`0.85 0.88 0.92 RG 0.8 w 42 788 m 553 788 l S`);
-      return 768;
-    }
-  };
-
-  let y = iniciarPagina(true);
-
-  const asegurarEspacio = (altoNecesario) => {
-    if (y - altoNecesario < 115) {
-      paginas.push(ops.join("\n"));
-      y = iniciarPagina(false);
-    }
-  };
-
-  items.forEach((item, idx) => {
-    const { encabezado, instruccion } = formatearItemReceta(item);
-    const lineasEnc = dividirLineasPdf(`${idx + 1}. ${encabezado}`, 82);
-    const lineasInst = instruccion ? dividirLineasPdf(instruccion, 84) : [];
-    const altoBloque = lineasEnc.length * 14 + lineasInst.length * 13 + 12;
-
-    asegurarEspacio(altoBloque);
-
-    for (const ln of lineasEnc) {
-      escribirTexto("/F2", 10.5, 44, y, ln, "0.06 0.09 0.16");
-      y -= 14;
-    }
-    for (const ln of lineasInst) {
-      escribirTexto("/F1", 10, 58, y, ln, "0.18 0.22 0.28");
-      y -= 13;
-    }
-    ops.push(`0.88 0.91 0.94 RG 0.5 w 44 ${(y + 5).toFixed(2)} m 550 ${(y + 5).toFixed(2)} l S`);
-    y -= 10;
-  });
-
-  if (indicacionesGenerales?.trim()) {
-    const lineasInd = dividirLineasPdf(indicacionesGenerales.trim(), 86);
-    const altoCaja = lineasInd.length * 13 + 26;
-    asegurarEspacio(altoCaja);
-
-    ops.push(`0.97 0.98 0.99 rg 42 ${(y - altoCaja + 12).toFixed(2)} 511 ${altoCaja} re f`);
-    ops.push(`0.80 0.84 0.88 RG 0.7 w 42 ${(y - altoCaja + 12).toFixed(2)} 511 ${altoCaja} re S`);
-    escribirTexto("/F2", 9.5, 50, y - 4, "Indicaciones generales y cuidados en casa:");
-    let yInd = y - 18;
-    for (const ln of lineasInd) {
-      escribirTexto("/F1", 9.2, 50, yInd, ln);
-      yInd -= 13;
-    }
-    y -= altoCaja + 10;
-  }
-
-  if (proximoControl) {
-    asegurarEspacio(24);
-    escribirTexto("/F2", 9.5, 44, y, `Próximo control médico: ${fechaCorta(proximoControl)}`);
-    y -= 20;
-  }
-
-  const yFirma = Math.min(y - 34, 105);
-  ops.push(`0.12 0.16 0.23 RG 1.1 w 330 ${yFirma.toFixed(2)} m 545 ${yFirma.toFixed(2)} l S`);
-  escribirTexto("/F2", 9.8, 345, yFirma - 14, medico || "Médico Veterinario");
-  escribirTexto("/F1", 8.8, 345, yFirma - 26, "Médico Veterinario Zootecnista", "0.28 0.33 0.41");
-  let yPie = yFirma - 38;
-  if (registroProf?.trim()) {
-    escribirTexto("/F1", 8.5, 345, yPie, `Reg. Prof.: ${registroProf.trim()}`, "0.28 0.33 0.41");
-    yPie -= 12;
-  }
-  escribirTexto("/F1", 8.5, 345, yPie, "Clínica Veterinaria El Pibe", "0.28 0.33 0.41");
-
-  paginas.push(ops.join("\n"));
-
-  const objetos = [];
-  const agregarObj = (contenido) => {
-    objetos.push(contenido);
-    return objetos.length;
-  };
-
-  const catalogId = agregarObj("");
-  const pagesId = agregarObj("");
-  const fontRegId = agregarObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
-  const fontBoldId = agregarObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
-  const fontSerifId = agregarObj("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>");
-
-  const pageIds = [];
-  for (const streamStr of paginas) {
-    const contentId = agregarObj(`<< /Length ${streamStr.length} >>\nstream\n${streamStr}\nendstream`);
-    const pageId = agregarObj(
-      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 ${fontRegId} 0 R /F2 ${fontBoldId} 0 R /F3 ${fontSerifId} 0 R >> >> /Contents ${contentId} 0 R >>`
-    );
-    pageIds.push(pageId);
-  }
-
-  objetos[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
-  objetos[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`;
-
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  for (let i = 0; i < objetos.length; i++) {
-    offsets.push(pdf.length);
-    pdf += `${i + 1} 0 obj\n${objetos[i]}\nendobj\n`;
-  }
-
-  const xrefStart = pdf.length;
-  pdf += `xref\n0 ${objetos.length + 1}\n`;
-  pdf += "0000000000 65535 f \n";
-  for (let i = 1; i <= objetos.length; i++) {
-    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objetos.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-
-  const bytes = new Uint8Array(pdf.length);
-  for (let i = 0; i < pdf.length; i++) {
-    bytes[i] = pdf.charCodeAt(i) & 0xff;
-  }
-
-  const nombrePacienteLimpio = String(paciente.nombre || "Paciente")
-    .trim()
-    .replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]+/g, "_");
-  const nombreArchivo = `Receta_${nombrePacienteLimpio}_${fechaEmision || fechaLocal(new Date()).slice(0, 10)}.pdf`;
-
-  return new File([bytes], nombreArchivo, { type: "application/pdf" });
-}
-
-function descargarBlobLocal(file) {
-  const url = URL.createObjectURL(file);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = file.name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
-
-// ============================================================================
-// MODAL DE RECETAS (CON GUARDADO PDF EN LA NUBE) Y CONSENTIMIENTOS
-// ============================================================================
-export function ModalDocumentosClinicos({
-  paciente,
-  atenciones = [],
-  profesionales = [],
-  repo,
-  cerrar,
-  tipoInicial = "receta",
-  recetaInicial = null,
-  onRecetaGuardada
-}) {
-  const dialog = useRef(null);
-  const [tipoDoc, setTipoDoc] = useState(recetaInicial ? "receta" : tipoInicial);
-  const [copiado, setCopiado] = useState(false);
-  const [guardandoNube, setGuardandoNube] = useState(false);
-  const [errorGuardar, setErrorGuardar] = useState("");
-  const [avisoGuardar, setAvisoGuardar] = useState("");
-
-  const ultimaAtencion = atenciones[0] || null;
-  const hospitalActiva = atenciones.find((a) => a.tipo === "hospitalizacion" && a.abierta);
-  const ultimoPeso = atenciones.find((a) => a.peso != null)?.peso;
-
-  const [medico, setMedico] = useState(
-    recetaInicial?.medico || ultimaAtencion?.profesional || "MVZ. Cristhian Romero"
-  );
-  const [registroProf, setRegistroProf] = useState(recetaInicial?.registroProf || "");
-  const [fechaEmision, setFechaEmision] = useState(
-    recetaInicial?.fechaEmision || fechaLocal(new Date()).slice(0, 10)
-  );
-
-  // Estado: Receta Médica
-  const [filasRx, setFilasRx] = useState(() =>
-    recetaInicial?.items?.length
-      ? recetaInicial.items.map((it) => ({
-          ...it,
-          id: it.id || uuid(),
-          duracion: String(it.duracion || "").replace(/\D/g, "")
-        }))
-      : [crearFilaReceta(), crearFilaReceta()]
-  );
-  const [indicacionesGenerales, setIndicacionesGenerales] = useState(
-    recetaInicial?.indicacionesGenerales || ""
-  );
-  const [proximoControl, setProximoControl] = useState(recetaInicial?.proximoControl || "");
-
-  // Estado: Consentimientos
-  const [procedimientoCirugia, setProcedimientoCirugia] = useState("");
-  const [diagnosticoDoc, setDiagnosticoDoc] = useState(
-    hospitalActiva?.titulo || ultimaAtencion?.titulo || ""
-  );
-  const [areaJaula, setAreaJaula] = useState(hospitalActiva?.jaula || "");
-  const [observacionesConsentimiento, setObservacionesConsentimiento] = useState("");
-
-  useEffect(() => {
-    const el = dialog.current;
-    if (el && !el.open) el.showModal();
-    return () => {
-      if (el?.open) el.close();
-    };
-  }, []);
-
-  function actualizarFilaRx(id, campo, valor) {
-    setFilasRx((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, [campo]: valor } : f))
+function insertarMedicamentoRapido(filasActuales, med) {
+  const idxVacia = filasActuales.findIndex((f) => !f.medicamento.trim());
+  if (idxVacia !== -1) {
+    return filasActuales.map((f, idx) =>
+      idx === idxVacia
+        ? {
+            ...f,
+            medicamento: med.nombre,
+            dosis: f.dosis || med.dosis || "",
+            frecuencia: f.frecuencia || med.frecuencia || "",
+            duracion: f.duracion || med.duracion || ""
+          }
+        : f
     );
   }
+  return [
+    ...filasActuales,
+    {
+      id: uuid(),
+      medicamento: med.nombre,
+      dosis: med.dosis || "",
+      frecuencia: med.frecuencia || "",
+      duracion: med.duracion || ""
+    }
+  ];
+}
 
-  function agregarFilaRx() {
-    setFilasRx((prev) => [...prev, crearFilaReceta()]);
+function imprimirRecetaVentana(paciente, receta) {
+  const ventana = window.open("", "_blank", "width=820,height=900");
+  if (!ventana) {
+    alert("Activa las ventanas emergentes para imprimir o guardar la receta en PDF.");
+    return;
   }
 
-  function quitarFilaRx(id) {
-    setFilasRx((prev) =>
-      prev.length > 1 ? prev.filter((f) => f.id !== id) : [crearFilaReceta()]
-    );
+  const filasHtml = (receta.items || [])
+    .map(
+      (it, i) => `
+      <tr>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${i + 1}</td>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;"><strong>${it.medicamento}</strong></td>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${it.dosis || "-"}</td>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${it.frecuencia || "-"}</td>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${it.duracion || "-"}</td>
+      </tr>`
+    )
+    .join("");
+
+  ventana.document.write(`
+    <!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Receta_${paciente.nombre}_${receta.fecha}</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #0f172a; padding: 28px; max-width: 760px; margin: auto; }
+          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f766e; padding-bottom: 12px; margin-bottom: 16px; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 13px; background: #f8fafc; padding: 12px; border-radius: 8px; margin-bottom: 18px; }
+          table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 18px; }
+          th { background: #f0fdfa; color: #115e59; text-align: left; padding: 8px; border-bottom: 2px solid #5eead4; }
+          .notas { background: #fffbeb; border: 1px solid #fde68a; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 36px; }
+          .firma { margin-top: 48px; text-align: center; font-size: 13px; }
+          .linea { width: 240px; border-top: 1px solid #334155; margin: 0 auto 6px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <h2 style="margin:0;color:#0f766e;">Clínica Veterinaria "El Pibe"</h2>
+            <p style="margin:2px 0 0;font-size:12px;color:#475569;">Receta Médica Veterinaria</p>
+          </div>
+          ${marca ? `<img src="${marca}" alt="Logo" style="height:46px;object-fit:contain;" />` : ""}
+        </div>
+
+        <div class="grid">
+          <div><strong>Paciente:</strong> ${paciente.nombre} (${paciente.especie || ""})</div>
+          <div><strong>Fecha:</strong> ${receta.fecha}</div>
+          <div><strong>Raza / Sexo:</strong> ${[paciente.raza, paciente.sexo].filter(Boolean).join(" · ") || "Sin registrar"}</div>
+          <div><strong>Edad:</strong> ${edad(paciente.nacimiento, paciente.edad_estimada) || "Sin registrar"}</div>
+          <div><strong>Propietario:</strong> ${paciente.propietario || "Sin registrar"}</div>
+          <div><strong>Teléfono:</strong> ${paciente.telefono || "Sin registrar"}</div>
+        </div>
+
+        <h3 style="margin:0 0 8px;font-size:15px;color:#0f766e;">Rp / Prescripción</h3>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px;">#</th>
+              <th>Medicamento</th>
+              <th>Dosis</th>
+              <th>Frecuencia</th>
+              <th>Duración</th>
+            </tr>
+          </thead>
+          <tbody>${filasHtml}</tbody>
+        </table>
+
+        ${
+          receta.indicaciones
+            ? `<div class="notas"><strong>Indicaciones y recomendaciones:</strong><br/>${receta.indicaciones.replace(/\n/g, "<br/>")}</div>`
+            : ""
+        }
+
+        <div class="firma">
+          <div class="linea"></div>
+          <strong>${receta.medico}</strong><br/>
+          <span>Médico Veterinario Zootecnista</span>
+        </div>
+
+        <script>window.onload = function() { window.print(); };</script>
+      </body>
+    </html>
+  `);
+  ventana.document.close();
+}
+
+function FormularioRecetaBloque({ paciente, profesionales, repo, onGuardada }) {
+  const [medico, setMedico] = useState("MVZ. Cristhian Romero");
+  const [fecha, setFecha] = useState(fechaLocal(new Date()).slice(0, 10));
+  const [indicaciones, setIndicaciones] = useState("");
+  const [filas, setFilas] = useState(() => crearFilasReceta());
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+  const [aviso, setAviso] = useState("");
+
+  function actualizarFila(id, campo, valor) {
+    setFilas((prev) => prev.map((f) => (f.id === id ? { ...f, [campo]: valor } : f)));
   }
 
-  const itemsValidosRx = filasRx.filter((f) => f.medicamento.trim() !== "");
+  function agregarFila() {
+    setFilas((prev) => [...prev, { id: uuid(), medicamento: "", dosis: "", frecuencia: "", duracion: "" }]);
+  }
 
-  async function guardarRecetaPdfEnNube() {
-    if (guardandoNube) return;
-    if (itemsValidosRx.length === 0) {
-      setErrorGuardar("Agrega al menos un medicamento antes de guardar la receta en la nube.");
+  function quitarFila(id) {
+    setFilas((prev) => (prev.length > 1 ? prev.filter((f) => f.id !== id) : crearFilasReceta()));
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!medico.trim() || guardando) return;
+    const validos = filas.filter((f) => f.medicamento.trim());
+    if (validos.length === 0) {
+      setError("Agrega al menos un medicamento.");
       return;
     }
 
-    setGuardandoNube(true);
-    setErrorGuardar("");
-    setAvisoGuardar("");
-
+    setGuardando(true);
+    setError("");
     try {
-      const medicoFinal = medico.trim() || "MVZ. Cristhian Romero";
-      const pdfFile = generarArchivoPdfReceta({
-        paciente,
-        ultimoPeso,
-        medico: medicoFinal,
-        registroProf: registroProf.trim(),
-        fechaEmision,
-        items: itemsValidosRx,
-        indicacionesGenerales: indicacionesGenerales.trim(),
-        proximoControl
-      });
-
-      let anexoId = null;
-      let nombrePdf = pdfFile.name;
-
-      if (repo?.subir) {
-        let visitaId = atenciones[0]?.id;
-        if (!visitaId && repo.guardarAtencion) {
-          visitaId = uuid();
-          await repo.guardarAtencion({
-            id: visitaId,
-            paciente_id: paciente.id,
-            tipo: "consulta",
-            fecha_local: fechaLocal(new Date()),
-            titulo: "Prescripción médica",
-            profesional: medicoFinal,
-            detalle_clinico: {},
-            resumen: "Atención creada automáticamente para respaldar receta médica en PDF.",
-            version: 0,
-            abierta: false
-          });
-        }
-        if (visitaId) {
-          anexoId = uuid();
-          await repo.subir(anexoId, visitaId, pdfFile, "diagnostico");
-        }
-      }
-
-      const registroReceta = {
-        id: recetaInicial?.id || uuid(),
-        medico: medicoFinal,
-        registroProf: registroProf.trim(),
-        fechaEmision,
-        items: itemsValidosRx,
-        indicacionesGenerales: indicacionesGenerales.trim(),
-        proximoControl,
-        anexoId,
-        nombrePdf,
-        actualizadoEn: fechaLocal(new Date()).replace("T", " ")
+      const nueva = {
+        id: uuid(),
+        fecha,
+        medico: medico.trim(),
+        indicaciones: indicaciones.trim(),
+        items: validos
       };
 
-      let guardada = registroReceta;
-      if (repo?.modulos?.guardar) {
-        guardada = await repo.modulos.guardar(paciente.id, "receta", registroReceta);
-      }
-
-      setAvisoGuardar(
-        recetaInicial
-          ? "Receta actualizada y nuevo PDF guardado en la nube."
-          : "Receta guardada en PDF en la nube."
-      );
-
-      if (onRecetaGuardada) {
-        onRecetaGuardada(guardada);
-      }
-      setTimeout(() => cerrar(), 650);
+      const guardada = await repo.modulos.guardar(paciente.id, "receta", nueva);
+      setFilas(crearFilasReceta());
+      setIndicaciones("");
+      setAviso("Receta guardada correctamente.");
+      setTimeout(() => setAviso(""), 3500);
+      if (onGuardada) onGuardada(guardada);
     } catch (err) {
-      setErrorGuardar(err.message || "No se pudo guardar el PDF de la receta en la nube.");
+      setError(err.message || "No se pudo guardar la receta.");
     } finally {
-      setGuardandoNube(false);
+      setGuardando(false);
     }
   }
-
-  function descargarPdfDirecto() {
-    const pdfFile = generarArchivoPdfReceta({
-      paciente,
-      ultimoPeso,
-      medico: medico.trim() || "MVZ. Cristhian Romero",
-      registroProf: registroProf.trim(),
-      fechaEmision,
-      items: itemsValidosRx,
-      indicacionesGenerales: indicacionesGenerales.trim(),
-      proximoControl
-    });
-    descargarBlobLocal(pdfFile);
-  }
-
-  function construirTextoWhatsApp() {
-    const medicoTexto = medico.trim() || "Médico Veterinario";
-    const cabecera = [
-      "*CLÍNICA VETERINARIA EL PIBE*",
-      tipoDoc === "receta"
-        ? "*RECETA MÉDICA*"
-        : tipoDoc === "cirugia"
-        ? "*CONSENTIMIENTO DE CIRUGÍA Y ANESTESIA*"
-        : "*CONSENTIMIENTO DE HOSPITALIZACIÓN*",
-      `Fecha: ${fechaCorta(fechaEmision)}`,
-      `Paciente: *${paciente.nombre}* (${paciente.especie}${
-        ultimoPeso ? ` · ${Number(ultimoPeso).toLocaleString("es-EC")} kg` : ""
-      })`,
-      `Propietario: ${paciente.propietario}`,
-      `Médico tratante: *${medicoTexto}*`,
-      ""
-    ];
-
-    if (tipoDoc === "receta") {
-      if (itemsValidosRx.length === 0) {
-        cabecera.push("_Sin medicamentos ingresados._");
-      } else {
-        itemsValidosRx.forEach((item, idx) => {
-          const { encabezado, instruccion } = formatearItemReceta(item);
-          cabecera.push(`*${idx + 1}. ${encabezado}*`);
-          if (instruccion) cabecera.push(instruccion);
-          cabecera.push("");
-        });
-      }
-      if (indicacionesGenerales.trim()) {
-        cabecera.push(`*Indicaciones:* ${indicacionesGenerales.trim()}`);
-      }
-      if (proximoControl) {
-        cabecera.push(`*Próximo control:* ${fechaCorta(proximoControl)}`);
-      }
-    } else if (tipoDoc === "cirugia") {
-      cabecera.push(
-        `Procedimiento autorizado: *${procedimientoCirugia.trim() || "Por definir"}*`
-      );
-      if (diagnosticoDoc.trim()) {
-        cabecera.push(`Diagnóstico / Motivo: ${diagnosticoDoc.trim()}`);
-      }
-      cabecera.push(
-        "Autorizo al equipo médico de Clínica Veterinaria El Pibe a realizar el procedimiento quirúrgico y anestésico indicado."
-      );
-    } else {
-      cabecera.push(
-        `Motivo de hospitalización: *${diagnosticoDoc.trim() || "Observación y tratamiento"}*`
-      );
-      if (areaJaula.trim()) cabecera.push(`Área asignada: ${areaJaula.trim()}`);
-      cabecera.push(
-        "Autorizo el ingreso hospitalario, administración de fluidoterapia, medicación y exámenes diagnósticos necesarios."
-      );
-    }
-
-    return cabecera.join("\n").trim();
-  }
-
-  async function copiarTexto() {
-    try {
-      await navigator.clipboard.writeText(construirTextoWhatsApp());
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2500);
-    } catch {}
-  }
-
-  const enlaceWhatsApp = obtenerEnlaceWhatsApp(
-    paciente.telefono,
-    construirTextoWhatsApp()
-  );
-
-  // ==========================================================================
-  // HOJA IMPRIMIBLE (PARA CONSENTIMIENTOS O IMPRESIÓN DIRECTA)
-  // ==========================================================================
-  const hojaImprimible = createPortal(
-    <>
-      <style>{`
-        #ve-hoja-pdf-clinica { display: none; }
-        @media print {
-          @page { size: A4; margin: 14mm 15mm; }
-          body > *:not(#ve-hoja-pdf-clinica) { display: none !important; }
-          #ve-hoja-pdf-clinica {
-            display: block !important;
-            font-family: 'Segoe UI', Arial, sans-serif;
-            color: #111827;
-            background: #ffffff;
-            width: 100%;
-            line-height: 1.45;
-          }
-        }
-      `}</style>
-
-      <div id="ve-hoja-pdf-clinica">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            borderBottom: "2px solid #1e293b",
-            paddingBottom: "10px",
-            marginBottom: "14px"
-          }}
-        >
-          <LogoClinicaElPibe ancho={215} />
-
-          <div style={{ textAlign: "right", fontSize: "12.5px" }}>
-            <div style={{ fontSize: "16px", fontWeight: 800, textTransform: "uppercase", color: "#0f172a" }}>
-              {tipoDoc === "receta"
-                ? "Receta Médica Veterinaria"
-                : tipoDoc === "cirugia"
-                ? "Consentimiento Quirúrgico y Anestésico"
-                : "Consentimiento de Hospitalización"}
-            </div>
-            <div style={{ marginTop: "4px" }}>
-              <strong>Fecha:</strong> {fechaCorta(fechaEmision)}
-            </div>
-            <div>
-              <strong>Historia N.º:</strong> {paciente.codigo || "S/N"}
-            </div>
-            <div style={{ marginTop: "2px" }}>
-              <strong>Médico:</strong> {medico.trim() || "Médico Veterinario"}
-            </div>
-          </div>
-        </div>
-
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            fontSize: "12.5px",
-            marginBottom: "16px",
-            border: "1px solid #cbd5e1"
-          }}
-        >
-          <tbody>
-            <tr style={{ borderBottom: "1px solid #cbd5e1" }}>
-              <td style={{ padding: "6px 8px", width: "50%" }}>
-                <strong>Paciente:</strong> {paciente.nombre}
-              </td>
-              <td style={{ padding: "6px 8px", width: "50%" }}>
-                <strong>Propietario:</strong> {paciente.propietario}
-              </td>
-            </tr>
-            <tr style={{ borderBottom: "1px solid #cbd5e1" }}>
-              <td style={{ padding: "6px 8px" }}>
-                <strong>Especie / Raza:</strong> {paciente.especie}
-                {paciente.raza ? ` · ${paciente.raza}` : ""}
-              </td>
-              <td style={{ padding: "6px 8px" }}>
-                <strong>Cédula:</strong> {paciente.cedula || "________________"}
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: "6px 8px" }}>
-                <strong>Sexo / Edad / Peso:</strong>{" "}
-                {[
-                  paciente.sexo,
-                  edad(paciente.nacimiento, paciente.edad_estimada),
-                  ultimoPeso != null ? `${Number(ultimoPeso).toLocaleString("es-EC")} kg` : ""
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || "Sin registrar"}
-              </td>
-              <td style={{ padding: "6px 8px" }}>
-                <strong>Teléfono:</strong> {paciente.telefono || "________________"}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        {tipoDoc === "receta" ? (
-          <div>
-            <div style={{ fontSize: "15px", fontWeight: 800, marginBottom: "10px", borderBottom: "1px solid #e2e8f0", paddingBottom: "4px" }}>
-              Rp / Prescripción:
-            </div>
-            <div style={{ display: "grid", gap: "12px", marginBottom: "18px" }}>
-              {itemsValidosRx.map((item, idx) => {
-                const { encabezado, instruccion } = formatearItemReceta(item);
-                return (
-                  <div key={item.id} style={{ paddingBottom: "8px", borderBottom: "1px dashed #cbd5e1" }}>
-                    <div style={{ fontSize: "14px", fontWeight: 700 }}>
-                      {idx + 1}. {encabezado}
-                    </div>
-                    {instruccion && (
-                      <div style={{ fontSize: "13.5px", marginTop: "2px", paddingLeft: "14px" }}>
-                        {instruccion}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {indicacionesGenerales.trim() && (
-              <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "10px 12px", fontSize: "13px", marginBottom: "14px" }}>
-                <strong>Indicaciones generales y cuidados en casa:</strong>
-                <p style={{ margin: "4px 0 0", whiteSpace: "pre-line" }}>{indicacionesGenerales.trim()}</p>
-              </div>
-            )}
-            {proximoControl && (
-              <div style={{ fontSize: "13px", marginBottom: "16px" }}>
-                <strong>Próximo control médico:</strong> {fechaCorta(proximoControl)}
-              </div>
-            )}
-          </div>
-        ) : tipoDoc === "cirugia" ? (
-          <div style={{ fontSize: "13px", textAlign: "justify" }}>
-            <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "8px 12px", marginBottom: "12px" }}>
-              <div>
-                <strong>Procedimiento quirúrgico autorizado:</strong>{" "}
-                {procedimientoCirugia.trim() || "________________________________________"}
-              </div>
-              {diagnosticoDoc.trim() && (
-                <div style={{ marginTop: "4px" }}>
-                  <strong>Diagnóstico / Motivo:</strong> {diagnosticoDoc.trim()}
-                </div>
-              )}
-            </div>
-            <p style={{ marginBottom: "10px" }}>
-              Yo, <strong>{paciente.propietario}</strong>, con cédula de identidad N.º{" "}
-              <strong>{paciente.cedula || "________________"}</strong>, en calidad de propietario(a) o responsable
-              legal del paciente <strong>{paciente.nombre}</strong>, declaro que he sido informado(a) de manera clara
-              y comprensible por el médico veterinario tratante,{" "}
-              <strong>{medico.trim() || "Médico Veterinario"}</strong>, sobre la naturaleza, objetivos, beneficios y
-              posibles riesgos inherentes al procedimiento quirúrgico y protocolo anestésico arriba descrito.
-            </p>
-            <p style={{ marginBottom: "10px" }}>
-              Comprendo que todo acto anestésico y quirúrgico conlleva riesgos imprevisibles (reacciones adversas a
-              fármacos, hemorragias, infecciones o complicaciones cardiorrespiratorias), por lo que autorizo al equipo
-              de <strong>Clínica Veterinaria El Pibe</strong> a realizar las maniobras médicas, reanimación o
-              procedimientos complementarios de emergencia necesarios para salvaguardar la vida del paciente,
-              asumiendo los honorarios y costos derivados de su atención.
-            </p>
-            {observacionesConsentimiento.trim() && (
-              <p style={{ marginBottom: "10px" }}>
-                <strong>Observaciones adicionales:</strong> {observacionesConsentimiento.trim()}
-              </p>
-            )}
-          </div>
-        ) : (
-          <div style={{ fontSize: "13px", textAlign: "justify" }}>
-            <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "8px 12px", marginBottom: "12px" }}>
-              <div>
-                <strong>Motivo de ingreso / Diagnóstico presuntivo:</strong>{" "}
-                {diagnosticoDoc.trim() || "________________________________________"}
-              </div>
-              {areaJaula.trim() && (
-                <div style={{ marginTop: "4px" }}>
-                  <strong>Área / Jaula asignada:</strong> {areaJaula.trim()}
-                </div>
-              )}
-            </div>
-            <p style={{ marginBottom: "10px" }}>
-              Yo, <strong>{paciente.propietario}</strong>, con cédula de identidad N.º{" "}
-              <strong>{paciente.cedula || "________________"}</strong>, autorizo el ingreso y permanencia en el área de
-              hospitalización de <strong>Clínica Veterinaria El Pibe</strong> de mi mascota{" "}
-              <strong>{paciente.nombre}</strong>, bajo la supervisión de{" "}
-              <strong>{medico.trim() || "Médico Veterinario"}</strong> y el personal clínico de turno.
-            </p>
-            <p style={{ marginBottom: "10px" }}>
-              Autorizo la administración de fluidoterapia, medicación parenteral u oral, toma de muestras y exámenes
-              complementarios necesarios para su diagnóstico y estabilización. Declaro conocer el estado clínico actual
-              del paciente, los horarios de visita/informes médicos y me comprometo a cubrir los valores generados
-              durante su estancia hospitalaria.
-            </p>
-            {observacionesConsentimiento.trim() && (
-              <p style={{ marginBottom: "10px" }}>
-                <strong>Observaciones adicionales:</strong> {observacionesConsentimiento.trim()}
-              </p>
-            )}
-          </div>
-        )}
-
-        <div
-          style={{
-            marginTop: "42px",
-            display: "flex",
-            justifyContent: tipoDoc === "receta" ? "flex-end" : "space-between",
-            gap: "32px",
-            pageBreakInside: "avoid"
-          }}
-        >
-          {tipoDoc !== "receta" && (
-            <div style={{ width: "45%", textAlign: "center", fontSize: "12.5px" }}>
-              <div style={{ borderTop: "1.5px solid #1e293b", paddingTop: "6px", fontWeight: 700 }}>
-                {paciente.propietario}
-              </div>
-              <div>Propietario / Responsable</div>
-              <div>C.I.: {paciente.cedula || "________________"}</div>
-            </div>
-          )}
-
-          <div style={{ width: tipoDoc === "receta" ? "52%" : "45%", textAlign: "center", fontSize: "12.5px" }}>
-            <div style={{ borderTop: "1.5px solid #1e293b", paddingTop: "6px", fontWeight: 700 }}>
-              {medico.trim() || "Médico Veterinario"}
-            </div>
-            <div>Médico Veterinario Zootecnista</div>
-            {registroProf.trim() && <div>Reg. Prof.: {registroProf.trim()}</div>}
-            <div style={{ color: "#475569", fontSize: "11.5px" }}>Clínica Veterinaria El Pibe</div>
-          </div>
-        </div>
-      </div>
-    </>,
-    document.body
-  );
 
   return (
-    <>
-      <dialog
-        className="ve-dialog ve-dialog-clinico"
-        ref={dialog}
-        onCancel={(e) => {
-          e.preventDefault();
-          if (!guardandoNube) cerrar();
-        }}
-        aria-labelledby="titulo-docs-clinicos"
-      >
-        <div>
-          <div className="ve-row" style={{ alignItems: "flex-start", gap: "0.75rem" }}>
-            <div>
-              <h2 id="titulo-docs-clinicos" style={{ margin: 0 }}>
-                {recetaInicial ? `Editar receta · ${paciente.nombre}` : `Recetas y Documentos · ${paciente.nombre}`}
-              </h2>
-              <p className="ve-meta" style={{ marginTop: "0.2rem" }}>
-                Propietario: <strong>{paciente.propietario}</strong> · {paciente.especie}
-                {ultimoPeso != null ? ` · ${Number(ultimoPeso).toLocaleString("es-EC")} kg` : ""}
-              </p>
-            </div>
-            <Boton icono={X} aria-label="Cerrar" onClick={cerrar} disabled={guardandoNube} />
-          </div>
+    <form onSubmit={guardar} style={{ display: "grid", gap: "0.85rem" }}>
+      <div className="ve-campos">
+        <div className="ve-field">
+          <label>Médico veterinario *</label>
+          <input
+            type="text"
+            value={medico}
+            onChange={(e) => setMedico(e.target.value)}
+            list="ve-prof-recetas"
+            required
+          />
+          <datalist id="ve-prof-recetas">
+            {(profesionales || []).map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
+        </div>
 
-          {!recetaInicial && (
-            <div
-              className="ve-actions"
+        <div className="ve-field">
+          <label>Fecha *</label>
+          <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} required />
+        </div>
+      </div>
+
+      {/* Botones rápidos de medicamentos */}
+      <div
+        style={{
+          background: "#f0fdfa",
+          border: "1px solid #5eead4",
+          borderRadius: "10px",
+          padding: "0.6rem 0.75rem",
+          display: "grid",
+          gap: "0.45rem"
+        }}
+      >
+        <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#115e59", textTransform: "uppercase" }}>
+          Agregar medicamento frecuente en 1 toque:
+        </span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+          {RECETAS_RAPIDAS.map((med) => (
+            <button
+              key={med.nombre}
+              type="button"
+              onClick={() => setFilas((prev) => insertarMedicamentoRapido(prev, med))}
               style={{
-                marginTop: "0.75rem",
-                paddingBottom: "0.75rem",
-                borderBottom: "1px solid #e2e8f0",
-                flexWrap: "wrap"
+                padding: "0.32rem 0.65rem",
+                borderRadius: "999px",
+                border: "1px solid #2dd4bf",
+                background: "#ffffff",
+                color: "#115e59",
+                fontSize: "0.8rem",
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.25rem"
               }}
             >
-              <Boton principal={tipoDoc === "receta"} icono={FileText} onClick={() => setTipoDoc("receta")}>
-                Receta médica
-              </Boton>
-              <Boton principal={tipoDoc === "cirugia"} icono={Scissors} onClick={() => setTipoDoc("cirugia")}>
-                Consentimiento cirugía
-              </Boton>
-              <Boton principal={tipoDoc === "hospitalizacion"} icono={Activity} onClick={() => setTipoDoc("hospitalizacion")}>
-                Consentimiento hospitalización
-              </Boton>
-            </div>
-          )}
-
-          <div className="ve-campos" style={{ marginTop: "0.75rem" }}>
-            <div className="ve-field">
-              <label>Médico veterinario que receta / firma *</label>
-              <input
-                type="text"
-                value={medico}
-                onChange={(e) => setMedico(e.target.value)}
-                list="ve-medicos-receta"
-                placeholder="Ej. MVZ. Cristhian Romero"
-                required
-              />
-              <datalist id="ve-medicos-receta">
-                {[
-                  "MVZ. Cristhian Romero",
-                  "Dr. Franklin Pazmiño",
-                  ...profesionales.filter(
-                    (p) => p !== "MVZ. Cristhian Romero" && p !== "Dr. Franklin Pazmiño"
-                  )
-                ].map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </div>
-
-            <div className="ve-field">
-              <label>Registro profesional (opcional)</label>
-              <input
-                type="text"
-                value={registroProf}
-                onChange={(e) => setRegistroProf(e.target.value)}
-                placeholder="Ej. Reg. SENESCYT / MP"
-              />
-            </div>
-
-            <div className="ve-field">
-              <label>Fecha del documento</label>
-              <input
-                type="date"
-                value={fechaEmision}
-                onChange={(e) => setFechaEmision(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {tipoDoc === "receta" ? (
-            <div style={{ marginTop: "0.85rem", display: "grid", gap: "0.85rem" }}>
-              <div style={{ overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: "10px" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.83rem" }}>
-                  <thead>
-                    <tr style={{ background: "#f1f5f9", textAlign: "left", color: "#334155", borderBottom: "1px solid #cbd5e1" }}>
-                      <th style={{ padding: "0.45rem" }}>Medicamento</th>
-                      <th style={{ padding: "0.45rem", width: "130px" }}># Cantidad</th>
-                      <th style={{ padding: "0.45rem", width: "130px" }}>Vía</th>
-                      <th style={{ padding: "0.45rem", width: "120px" }}>Dosis</th>
-                      <th style={{ padding: "0.45rem", width: "125px" }}>Cada (frec.)</th>
-                      <th style={{ padding: "0.45rem", width: "115px" }}>Durante</th>
-                      <th style={{ width: "32px" }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filasRx.map((fila) => (
-                      <tr key={fila.id} style={{ borderBottom: "1px solid #e2e8f0", background: "#fff" }}>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.medicamento}
-                            onChange={(e) => actualizarFilaRx(fila.id, "medicamento", e.target.value)}
-                            placeholder="Ej. Amoxicilina + Ác. Clavulánico 250 mg"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.cantidadTotal}
-                            onChange={(e) => actualizarFilaRx(fila.id, "cantidadTotal", e.target.value)}
-                            placeholder="1 caja (14 tab)"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <select
-                            value={fila.via}
-                            onChange={(e) => actualizarFilaRx(fila.id, "via", e.target.value)}
-                            style={{ width: "100%", padding: "0.38rem 0.35rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          >
-                            {VIAS_ADMINISTRACION.map((v) => (
-                              <option key={v} value={v}>
-                                {v}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.dosis}
-                            onChange={(e) => actualizarFilaRx(fila.id, "dosis", e.target.value)}
-                            placeholder="1 tableta / 2 ml"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <select
-                            value={fila.frecuencia}
-                            onChange={(e) => actualizarFilaRx(fila.id, "frecuencia", e.target.value)}
-                            style={{ width: "100%", padding: "0.38rem 0.35rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          >
-                            <option value="">Seleccionar...</option>
-                            {FRECUENCIAS_RECETA.map((f) => (
-                              <option key={f} value={f}>
-                                {f}
-                              </option>
-                            ))}
-                            {fila.frecuencia && !FRECUENCIAS_RECETA.includes(fila.frecuencia) && (
-                              <option value={fila.frecuencia}>{fila.frecuencia}</option>
-                            )}
-                          </select>
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                            <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              value={fila.duracion}
-                              onChange={(e) => actualizarFilaRx(fila.id, "duracion", e.target.value)}
-                              placeholder="20"
-                              style={{ width: "68px", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                            />
-                            <span style={{ fontSize: "0.8rem", color: "#475569", fontWeight: 600 }}>días</span>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: "center" }}>
-                          <button
-                            type="button"
-                            onClick={() => quitarFilaRx(fila.id)}
-                            className="ve-link"
-                            title="Quitar medicamento"
-                          >
-                            <X size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div>
-                <Boton icono={Plus} onClick={agregarFilaRx}>
-                  Agregar medicamento
-                </Boton>
-              </div>
-
-              <div
-                style={{
-                  background: "#f8fafc",
-                  border: "1px solid #cbd5e1",
-                  borderRadius: "10px",
-                  padding: "0.75rem 0.9rem"
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.45rem", flexWrap: "wrap", gap: "0.5rem" }}>
-                  <span style={{ fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase", color: "#475569" }}>
-                    Vista previa en PDF (con logo y firma de {medico.trim() || "Médico"})
-                  </span>
-                  <LogoClinicaElPibe ancho={110} />
-                </div>
-
-                {itemsValidosRx.length === 0 ? (
-                  <p className="ve-meta" style={{ margin: 0 }}>
-                    Escribe un medicamento arriba para ver cómo quedará redactado en el PDF...
-                  </p>
-                ) : (
-                  <div style={{ display: "grid", gap: "0.55rem", fontSize: "0.86rem" }}>
-                    {itemsValidosRx.map((item, idx) => {
-                      const { encabezado, instruccion } = formatearItemReceta(item);
-                      return (
-                        <div key={item.id}>
-                          <strong style={{ color: "#0f172a" }}>
-                            {idx + 1}. {encabezado}
-                          </strong>
-                          {instruccion && (
-                            <div style={{ color: "#334155", paddingLeft: "0.85rem" }}>
-                              {instruccion}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="ve-campos">
-                <div className="ve-field ve-ancho">
-                  <label>Indicaciones generales / Dieta / Cuidados en casa</label>
-                  <textarea
-                    rows={2}
-                    value={indicacionesGenerales}
-                    onChange={(e) => setIndicacionesGenerales(e.target.value)}
-                    placeholder="Ej. Administrar junto con comida, dieta blanda por 3 días, mantener collar isabelino..."
-                  />
-                </div>
-                <div className="ve-field">
-                  <label>Fecha próximo control (opcional)</label>
-                  <input
-                    type="date"
-                    value={proximoControl}
-                    onChange={(e) => setProximoControl(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : tipoDoc === "cirugia" ? (
-            <div className="ve-campos" style={{ marginTop: "0.85rem" }}>
-              <div className="ve-field">
-                <label>Procedimiento quirúrgico *</label>
-                <input
-                  type="text"
-                  value={procedimientoCirugia}
-                  onChange={(e) => setProcedimientoCirugia(e.target.value)}
-                  placeholder="Ej. Ovariohisterectomía (OVH), Profilaxis dental..."
-                />
-              </div>
-              <div className="ve-field">
-                <label>Diagnóstico / Motivo</label>
-                <input
-                  type="text"
-                  value={diagnosticoDoc}
-                  onChange={(e) => setDiagnosticoDoc(e.target.value)}
-                  placeholder="Ej. Esterilización electiva, Piómetra..."
-                />
-              </div>
-              <div className="ve-field ve-ancho">
-                <label>Observaciones o riesgos particulares (opcional)</label>
-                <textarea
-                  rows={2}
-                  value={observacionesConsentimiento}
-                  onChange={(e) => setObservacionesConsentimiento(e.target.value)}
-                  placeholder="Ej. Paciente geriátrico, ayuno verificado, exámenes prequirúrgicos revisados..."
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="ve-campos" style={{ marginTop: "0.85rem" }}>
-              <div className="ve-field">
-                <label>Motivo de ingreso / Diagnóstico presuntivo *</label>
-                <input
-                  type="text"
-                  value={diagnosticoDoc}
-                  onChange={(e) => setDiagnosticoDoc(e.target.value)}
-                  placeholder="Ej. Gastroenteritis hemorrágica, Parvovirosis..."
-                />
-              </div>
-              <div className="ve-field">
-                <label>Área / Jaula asignada</label>
-                <input
-                  type="text"
-                  value={areaJaula}
-                  onChange={(e) => setAreaJaula(e.target.value)}
-                  placeholder="Ej. Hospital general, Infectología..."
-                />
-              </div>
-              <div className="ve-field ve-ancho">
-                <label>Observaciones adicionales (opcional)</label>
-                <textarea
-                  rows={2}
-                  value={observacionesConsentimiento}
-                  onChange={(e) => setObservacionesConsentimiento(e.target.value)}
-                  placeholder="Ej. Pronóstico reservado, se autoriza transfusión o exámenes de laboratorio..."
-                />
-              </div>
-            </div>
-          )}
-
-          {errorGuardar && (
-            <p className="ve-message" role="alert" style={{ marginTop: "0.75rem" }}>
-              {errorGuardar}
-            </p>
-          )}
-
-          {avisoGuardar && (
-            <p className="ve-confirm" role="status" style={{ marginTop: "0.75rem" }}>
-              {avisoGuardar}
-            </p>
-          )}
-
-          <footer
-            className="ve-actions ve-last"
-            style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}
-          >
-            <Boton onClick={cerrar} disabled={guardandoNube}>
-              Cerrar
-            </Boton>
-
-            <div className="ve-actions" style={{ flexWrap: "wrap" }}>
-              <Boton icono={copiado ? Check : Copy} onClick={copiarTexto}>
-                {copiado ? "Copiado" : "Copiar texto"}
-              </Boton>
-
-              {enlaceWhatsApp && (
-                <a
-                  href={enlaceWhatsApp}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ve-button"
-                  style={{
-                    background: "#16a34a",
-                    borderColor: "#16a34a",
-                    color: "#fff",
-                    textDecoration: "none",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.4rem"
-                  }}
-                >
-                  <MessageCircle size={16} /> WhatsApp
-                </a>
-              )}
-
-              {tipoDoc === "receta" ? (
-                <>
-                  <Boton icono={Download} onClick={descargarPdfDirecto} disabled={itemsValidosRx.length === 0}>
-                    Descargar PDF
-                  </Boton>
-                  <button
-                    type="button"
-                    className="ve-button"
-                    onClick={guardarRecetaPdfEnNube}
-                    disabled={guardandoNube}
-                    style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
-                  >
-                    <CloudUpload size={16} />
-                    {guardandoNube
-                      ? "Guardando PDF en la nube…"
-                      : recetaInicial
-                      ? "Guardar cambios en PDF"
-                      : "Guardar PDF en la nube"}
-                  </button>
-                </>
-              ) : (
-                <Boton principal icono={Printer} onClick={() => window.print()}>
-                  Imprimir / Guardar PDF
-                </Boton>
-              )}
-            </div>
-          </footer>
+              <Plus size={13} color="#0f766e" />
+              {med.nombre}
+            </button>
+          ))}
         </div>
-      </dialog>
+      </div>
 
-      {hojaImprimible}
-    </>
+      <div style={{ overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: "10px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+          <thead>
+            <tr style={{ textAlign: "left", background: "#f1f5f9", color: "#334155", borderBottom: "1px solid #cbd5e1" }}>
+              <th style={{ padding: "0.5rem", width: "36px" }}>#</th>
+              <th style={{ padding: "0.5rem" }}>Medicamento</th>
+              <th style={{ padding: "0.5rem", width: "130px" }}>Dosis</th>
+              <th style={{ padding: "0.5rem", width: "145px" }}>Frecuencia</th>
+              <th style={{ padding: "0.5rem", width: "115px" }}>Duración</th>
+              <th style={{ padding: "0.5rem", width: "38px" }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((fila, idx) => (
+              <tr key={fila.id} style={{ borderBottom: "1px solid #e2e8f0", background: "#fff" }}>
+                <td style={{ padding: "0.4rem 0.5rem", color: "#64748b", fontWeight: 700 }}>{idx + 1}</td>
+                <td style={{ padding: "0.35rem 0.4rem" }}>
+                  <input
+                    type="text"
+                    value={fila.medicamento}
+                    onChange={(e) => actualizarFila(fila.id, "medicamento", e.target.value)}
+                    placeholder="Nombre del medicamento..."
+                    style={{ width: "100%", padding: "0.42rem 0.55rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                  />
+                </td>
+                <td style={{ padding: "0.35rem 0.4rem" }}>
+                  <input
+                    type="text"
+                    value={fila.dosis}
+                    onChange={(e) => actualizarFila(fila.id, "dosis", e.target.value)}
+                    placeholder="Ej. 1 comp / 2 ml"
+                    style={{ width: "100%", padding: "0.42rem 0.55rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                  />
+                </td>
+                <td style={{ padding: "0.35rem 0.4rem" }}>
+                  <input
+                    type="text"
+                    value={fila.frecuencia}
+                    onChange={(e) => actualizarFila(fila.id, "frecuencia", e.target.value)}
+                    placeholder="Ej. Cada 12h"
+                    style={{ width: "100%", padding: "0.42rem 0.55rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                  />
+                </td>
+                <td style={{ padding: "0.35rem 0.4rem" }}>
+                  <input
+                    type="text"
+                    value={fila.duracion}
+                    onChange={(e) => actualizarFila(fila.id, "duracion", e.target.value)}
+                    placeholder="Ej. 7 días"
+                    style={{ width: "100%", padding: "0.42rem 0.55rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                  />
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  <button type="button" onClick={() => quitarFila(fila.id)} className="ve-link" title="Quitar fila">
+                    <X size={15} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="ve-field">
+        <label>Indicaciones adicionales (opcional)</label>
+        <textarea
+          rows={2}
+          value={indicaciones}
+          onChange={(e) => setIndicaciones(e.target.value)}
+          placeholder="Ej. Dar después de comer, mantener hidratado, control en 7 días..."
+        />
+      </div>
+
+      {error && (
+        <p className="ve-message" role="alert" style={{ margin: 0 }}>
+          {error}
+        </p>
+      )}
+      {aviso && (
+        <p className="ve-confirm" role="status" style={{ margin: 0 }}>
+          {aviso}
+        </p>
+      )}
+
+      <div className="ve-actions">
+        <Boton icono={Plus} onClick={agregarFila}>
+          Agregar fila
+        </Boton>
+        <button type="submit" className="ve-button" disabled={guardando}>
+          {guardando ? "Guardando…" : "Guardar receta"}
+        </button>
+      </div>
+    </form>
   );
 }
 
-// ============================================================================
-// PESTAÑA DE RECETAS ALMACENADAS EN LA NUBE (AL LADO DE EXÁMENES)
-// ============================================================================
-export function PestanaRecetas({
-  paciente,
-  atenciones = [],
-  anexos = [],
-  profesionales = [],
-  repo,
-  revision,
-  onRecargar
-}) {
+export function PestanaRecetas({ paciente, atenciones, anexos = [], profesionales, repo, revision, onRecargar }) {
   const android = globalThis.Capacitor?.getPlatform?.() === "android";
-  const [lista, setLista] = useState([]);
+  const [recetas, setRecetas] = useState([]);
   const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState("");
-  const [aviso, setAviso] = useState("");
-  const [modalAbierto, setModalAbierto] = useState(false);
-  const [recetaEditando, setRecetaEditando] = useState(null);
-  const [eliminandoId, setEliminandoId] = useState("");
 
-  const ultimoPeso = atenciones.find((a) => a.peso != null)?.peso;
-
-  const cargarRecetas = useCallback(
+  const cargar = useCallback(
     async (signal) => {
       setCargando(true);
-      setError("");
       try {
         const items = await repo.modulos.listar(paciente.id, "receta", signal);
-        setLista(items || []);
+        setRecetas(items || []);
       } catch (e) {
-        if (e.name !== "AbortError") setError(e.message || "No se pudieron cargar las recetas.");
+        if (e.name !== "AbortError") console.error(e);
       } finally {
         setCargando(false);
       }
@@ -1374,261 +379,191 @@ export function PestanaRecetas({
 
   useEffect(() => {
     const ac = new AbortController();
-    cargarRecetas(ac.signal);
+    cargar(ac.signal);
     return () => ac.abort();
-  }, [cargarRecetas, revision]);
+  }, [cargar, revision]);
 
-  function descargarRespaldoLocal(receta) {
-    const pdfFile = generarArchivoPdfReceta({
-      paciente,
-      ultimoPeso,
-      medico: receta.medico || "MVZ. Cristhian Romero",
-      registroProf: receta.registroProf || "",
-      fechaEmision: receta.fechaEmision || fechaLocal(new Date()).slice(0, 10),
-      items: receta.items || [],
-      indicacionesGenerales: receta.indicacionesGenerales || "",
-      proximoControl: receta.proximoControl || ""
-    });
-    descargarBlobLocal(pdfFile);
-  }
-
-  async function eliminarReceta(receta) {
-    if (eliminandoId === receta.id) return;
-    if (!window.confirm(`¿Eliminar esta receta del ${fechaCorta(receta.fechaEmision)}?`)) return;
-
-    setEliminandoId(receta.id);
-    setError("");
+  async function eliminar(id) {
     try {
-      await repo.modulos.eliminar(receta.id);
-      if (receta.anexoId && typeof repo.eliminarAnexo === "function") {
-        await repo.eliminarAnexo(receta.anexoId).catch(() => {});
-      }
-      setLista((prev) => prev.filter((r) => r.id !== receta.id));
-      setAviso("Receta eliminada.");
-      setTimeout(() => setAviso(""), 3500);
-      if (onRecargar) onRecargar();
+      await repo.modulos.eliminar(id);
+      setRecetas((prev) => prev.filter((r) => r.id !== id));
     } catch (err) {
-      setError(err.message || "No se pudo eliminar la receta.");
-    } finally {
-      setEliminandoId("");
+      alert(err.message || "No se pudo eliminar la receta.");
     }
   }
 
+  const recetasPdf = anexos.filter((x) => String(x.nombre || "").startsWith("Receta_"));
+
   return (
-    <section className="ve-panel ve-pad">
-      <div className="ve-row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-        <div>
-          <h2 style={{ margin: 0 }}>Recetas médicas ({lista.length})</h2>
-          <p className="ve-meta" style={{ margin: "0.2rem 0 0" }}>
-            Almacenadas en PDF en la nube para descargar, editar o eliminar en cualquier momento.
-          </p>
+    <div style={{ display: "grid", gap: "1rem" }}>
+      <section className="ve-panel ve-pad">
+        <div className="ve-row" style={{ marginBottom: "0.75rem" }}>
+          <h2 style={{ display: "flex", alignItems: "center", gap: "0.45rem", margin: 0 }}>
+            <FileText size={18} /> Nueva receta médica
+          </h2>
         </div>
 
-        <Boton
-          principal
-          icono={Plus}
-          onClick={() => {
-            setRecetaEditando(null);
-            setModalAbierto(true);
+        <FormularioRecetaBloque
+          paciente={paciente}
+          profesionales={profesionales}
+          repo={repo}
+          onGuardada={(nueva) => {
+            setRecetas((prev) => [nueva, ...prev]);
+            if (onRecargar) onRecargar();
           }}
-        >
-          Nueva receta
-        </Boton>
-      </div>
+        />
+      </section>
 
-      {error && (
-        <p className="ve-message" role="alert" style={{ marginTop: "0.75rem" }}>
-          {error}
-        </p>
-      )}
-
-      {aviso && (
-        <p className="ve-confirm" role="status" style={{ marginTop: "0.75rem" }}>
-          {aviso}
-        </p>
-      )}
-
-      {cargando ? (
-        <p className="ve-sub" style={{ marginTop: "0.75rem" }}>
-          Cargando recetas guardadas…
-        </p>
-      ) : lista.length === 0 ? (
-        <div className="ve-empty" style={{ marginTop: "0.75rem" }}>
-          <FileText size={24} />
-          <strong>Sin recetas guardadas</strong>
-          <span>Crea una receta médica y guárdala en PDF en la nube para tenerla siempre disponible aquí.</span>
+      <section className="ve-panel ve-pad">
+        <div className="ve-row">
+          <h2>Historial de Recetas ({recetas.length + recetasPdf.length})</h2>
         </div>
-      ) : (
-        <div style={{ display: "grid", gap: "0.75rem", marginTop: "0.85rem" }}>
-          {lista.map((rec) => {
-            const anexoNube = rec.anexoId ? anexos.find((a) => a.id === rec.anexoId) : null;
 
-            return (
+        {cargando ? (
+          <p className="ve-sub">Cargando recetas…</p>
+        ) : recetas.length === 0 && recetasPdf.length === 0 ? (
+          <p className="ve-sub">Aún no hay recetas emitidas para {paciente.nombre}.</p>
+        ) : (
+          <div style={{ display: "grid", gap: "0.75rem", marginTop: "0.75rem" }}>
+            {recetas.map((rec) => (
               <div
                 key={rec.id}
                 style={{
-                  border: "1px solid var(--borde, #dce3ea)",
+                  border: "1px solid #cbd5e1",
                   borderRadius: "10px",
-                  padding: "0.8rem 0.9rem",
-                  background: "#fff",
-                  display: "grid",
-                  gap: "0.55rem"
+                  padding: "0.85rem",
+                  background: "#fff"
                 }}
               >
-                <div className="ve-row" style={{ alignItems: "flex-start", gap: "0.6rem", flexWrap: "wrap" }}>
+                <div className="ve-row" style={{ alignItems: "flex-start" }}>
                   <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}>
-                      <strong style={{ fontSize: "0.96rem", color: "#0f172a" }}>
-                        Receta · {fechaCorta(rec.fechaEmision)}
-                      </strong>
-                      <span
-                        className="ve-badge"
-                        style={{ background: "#e0f2fe", color: "#0369a1", fontWeight: 700 }}
-                      >
-                        {rec.medico || "Médico Veterinario"}
-                      </span>
-                      {anexoNube && (
-                        <span
-                          className="ve-badge"
-                          style={{ background: "#dcfce7", color: "#166534", fontWeight: 700 }}
-                        >
-                          PDF en nube
-                        </span>
-                      )}
-                    </div>
-                    {rec.nombrePdf && (
-                      <p className="ve-meta" style={{ margin: "0.2rem 0 0" }}>
-                        Archivo: {rec.nombrePdf}
-                      </p>
-                    )}
+                    <span className="ve-badge" style={{ background: "#f0fdfa", color: "#0f766e", fontWeight: 700 }}>
+                      {rec.fecha}
+                    </span>
+                    <p className="ve-meta" style={{ marginTop: "0.25rem" }}>
+                      Médico: <strong>{rec.medico}</strong> · {(rec.items || []).length} medicamento(s)
+                    </p>
                   </div>
-
-                  <div className="ve-actions" style={{ flexWrap: "wrap" }}>
-                    {anexoNube ? (
-                      <>
-                        <a
-                          href={repo.enlace(anexoNube, false)}
-                          target={android ? "_self" : "_blank"}
-                          rel="noopener noreferrer"
-                          className="ve-link"
-                          style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontWeight: 700 }}
-                        >
-                          <ExternalLink size={14} /> Ver PDF
-                        </a>
-                        <a
-                          href={repo.enlace(anexoNube, true)}
-                          download={android ? undefined : anexoNube.nombre}
-                          className="ve-link"
-                          style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontWeight: 700 }}
-                        >
-                          <Download size={14} /> Descargar PDF
-                        </a>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => descargarRespaldoLocal(rec)}
-                        className="ve-link"
-                        style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontWeight: 700 }}
-                      >
-                        <Download size={14} /> Descargar PDF
-                      </button>
-                    )}
-
-                    <Boton
-                      icono={Pencil}
-                      onClick={() => {
-                        setRecetaEditando(rec);
-                        setModalAbierto(true);
-                      }}
-                    >
-                      Editar
-                    </Boton>
-
+                  <div className="ve-actions">
                     <button
                       type="button"
-                      onClick={() => eliminarReceta(rec)}
-                      disabled={eliminandoId === rec.id}
-                      style={{
-                        background: "#fee2e2",
-                        color: "#991b1b",
-                        border: "1px solid #fca5a5",
-                        borderRadius: "8px",
-                        padding: "0.38rem 0.65rem",
-                        fontWeight: 700,
-                        fontSize: "0.8rem",
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "0.3rem"
-                      }}
+                      className="ve-button"
+                      onClick={() => imprimirRecetaVentana(paciente, rec)}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem" }}
                     >
-                      <Trash2 size={14} />
-                      {eliminandoId === rec.id ? "Eliminando…" : "Eliminar"}
+                      <Printer size={14} /> Imprimir / PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => eliminar(rec.id)}
+                      className="ve-link"
+                      title="Eliminar receta"
+                      style={{ color: "#dc2626" }}
+                    >
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </div>
 
-                {/* Detalle legible de los medicamentos prescritos */}
-                <div
-                  style={{
-                    background: "#f8fafc",
-                    borderRadius: "8px",
-                    padding: "0.6rem 0.75rem",
-                    display: "grid",
-                    gap: "0.45rem",
-                    fontSize: "0.85rem"
-                  }}
-                >
-                  {(rec.items || []).map((item, idx) => {
-                    const { encabezado, instruccion } = formatearItemReceta(item);
-                    return (
-                      <div key={item.id || idx}>
-                        <strong style={{ color: "#0f172a" }}>
-                          {idx + 1}. {encabezado}
-                        </strong>
-                        {instruccion && (
-                          <div style={{ color: "#334155", paddingLeft: "0.8rem" }}>{instruccion}</div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {rec.indicacionesGenerales && (
-                    <div className="ve-meta" style={{ marginTop: "0.2rem", borderTop: "1px dashed #cbd5e1", paddingTop: "0.35rem" }}>
-                      <strong>Indicaciones:</strong> {rec.indicacionesGenerales}
+                <div style={{ display: "grid", gap: "0.3rem", marginTop: "0.6rem", fontSize: "0.85rem" }}>
+                  {(rec.items || []).map((it, i) => (
+                    <div key={i} style={{ padding: "0.35rem 0.55rem", background: "#f8fafc", borderRadius: "6px" }}>
+                      <strong>
+                        {i + 1}. {it.medicamento}
+                      </strong>
+                      {it.dosis ? ` · Dosis: ${it.dosis}` : ""}
+                      {it.frecuencia ? ` · ${it.frecuencia}` : ""}
+                      {it.duracion ? ` · ${it.duracion}` : ""}
                     </div>
+                  ))}
+                  {rec.indicaciones && (
+                    <p className="ve-meta" style={{ margin: "0.25rem 0 0" }}>
+                      <strong>Indicaciones:</strong> {rec.indicaciones}
+                    </p>
                   )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+            ))}
 
-      {modalAbierto && (
-        <ModalDocumentosClinicos
+            {recetasPdf.map((x) => (
+              <div className="ve-archivo" key={x.id}>
+                <div>
+                  <strong>{x.nombre}</strong>
+                  <p className="ve-meta">
+                    {atenciones?.find((a) => a.id === x.atencion_id)?.titulo || "Archivo PDF"} ·{" "}
+                    {Math.max(1, Math.round(x.bytes / 1024))} KB
+                  </p>
+                </div>
+                <div className="ve-actions">
+                  <a
+                    href={repo.enlace(x, false)}
+                    target={android ? "_self" : "_blank"}
+                    rel="noopener noreferrer"
+                    className="ve-link"
+                  >
+                    Ver
+                  </a>
+                  <a
+                    href={repo.enlace(x, true)}
+                    download={android ? undefined : x.nombre}
+                    className="ve-link"
+                  >
+                    Descargar
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+export function ModalDocumentosClinicos({ paciente, profesionales, repo, cerrar, onRecetaGuardada }) {
+  const dialog = useRef(null);
+
+  useEffect(() => {
+    const el = dialog.current;
+    if (el && !el.open) el.showModal();
+    return () => {
+      if (el?.open) el.close();
+    };
+  }, []);
+
+  return (
+    <dialog
+      className="ve-dialog ve-dialog-clinico"
+      ref={dialog}
+      onCancel={(e) => {
+        e.preventDefault();
+        cerrar();
+      }}
+      aria-labelledby="titulo-modal-docs"
+    >
+      <div>
+        <div className="ve-row" style={{ marginBottom: "0.75rem" }}>
+          <div>
+            <h2 id="titulo-modal-docs" style={{ margin: 0 }}>
+              Emitir receta · {paciente.nombre}
+            </h2>
+            <p className="ve-meta" style={{ margin: "0.2rem 0 0" }}>
+              Propietario: {paciente.propietario} · {fechaCorta(new Date())}
+            </p>
+          </div>
+          <Boton icono={X} aria-label="Cerrar" onClick={cerrar} />
+        </div>
+
+        <FormularioRecetaBloque
           paciente={paciente}
-          atenciones={atenciones}
           profesionales={profesionales}
           repo={repo}
-          tipoInicial="receta"
-          recetaInicial={recetaEditando}
-          cerrar={() => {
-            setModalAbierto(false);
-            setRecetaEditando(null);
-          }}
-          onRecetaGuardada={(guardada) => {
-            setLista((prev) => {
-              const existe = prev.some((r) => r.id === guardada.id);
-              return existe
-                ? prev.map((r) => (r.id === guardada.id ? guardada : r))
-                : [guardada, ...prev];
-            });
-            if (onRecargar) onRecargar();
+          onGuardada={() => {
+            cerrar();
+            if (onRecetaGuardada) onRecetaGuardada();
           }}
         />
-      )}
-    </section>
+      </div>
+    </dialog>
   );
 }
