@@ -1549,8 +1549,22 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
 }
 
 // ============================================================================
-// PESTAÑA DE COTIZACIONES (AGRUPADA, CON SALDO PENDIENTE Y MODAL DE DETALLE)
+// PESTAÑA DE COTIZACIONES (AGRUPADA, CON INSUMOS RÁPIDOS Y SALDO PENDIENTE)
 // ============================================================================
+const INSUMOS_FRECUENTES = [
+  { nombre: "Jeringa 3 ml", tipoItem: "Insumo" },
+  { nombre: "Jeringa 5 ml", tipoItem: "Insumo" },
+  { nombre: "Catéter 24", tipoItem: "Material médico" },
+  { nombre: "Catéter 22", tipoItem: "Material médico" },
+  { nombre: "Venoclisis", tipoItem: "Material médico" },
+  { nombre: "Guantes", tipoItem: "Insumo" },
+  { nombre: "Nylon 2-0", tipoItem: "Material médico" },
+  { nombre: "Vycril 2-0", tipoItem: "Material médico" },
+  { nombre: "Vicryl 1-0", tipoItem: "Material médico" },
+  { nombre: "Bisturí", tipoItem: "Material médico" },
+  { nombre: "Gasa", tipoItem: "Insumo" }
+];
+
 function crearFilasCotizacion() {
   return [
     { id: uuid(), tipoItem: "Medicina", descripcion: "", cantidad: "", nota: "" },
@@ -1741,6 +1755,53 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
 
   function actualizarFila(filaId, campo, valor) {
     setFilasTabla((prev) => prev.map((f) => (f.id === filaId ? { ...f, [campo]: valor } : f)));
+  }
+
+  function agregarInsumoRapido(insumo) {
+    setFilasTabla((prev) => {
+      const idxExistente = prev.findIndex(
+        (f) => f.descripcion.trim().toLowerCase() === insumo.nombre.toLowerCase()
+      );
+      if (idxExistente !== -1) {
+        return prev.map((f, idx) => {
+          if (idx !== idxExistente) return f;
+          const matchNum = String(f.cantidad || "").trim().match(/^(\d+)\s*(.*)$/);
+          if (matchNum) {
+            const nuevaCant = parseInt(matchNum[1], 10) + 1;
+            const sufijo = matchNum[2] ? ` ${matchNum[2]}` : " unid";
+            return { ...f, cantidad: `${nuevaCant}${sufijo}` };
+          }
+          return { ...f, cantidad: f.cantidad ? f.cantidad : "1 unid" };
+        });
+      }
+
+      const idxVacia = prev.findIndex(
+        (f) => !f.descripcion.trim() && !f.cantidad.trim()
+      );
+      if (idxVacia !== -1) {
+        return prev.map((f, idx) =>
+          idx === idxVacia
+            ? {
+                ...f,
+                tipoItem: insumo.tipoItem,
+                descripcion: insumo.nombre,
+                cantidad: "1 unid"
+              }
+            : f
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          id: uuid(),
+          tipoItem: insumo.tipoItem,
+          descripcion: insumo.nombre,
+          cantidad: "1 unid",
+          nota: ""
+        }
+      ];
+    });
   }
 
   function agregarFila() {
@@ -1991,6 +2052,47 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
             <div className="ve-field">
               <label>Fecha *</label>
               <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} required />
+            </div>
+          </div>
+
+          {/* Botones rápidos de insumos frecuentes */}
+          <div
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #cbd5e1",
+              borderRadius: "10px",
+              padding: "0.6rem 0.75rem",
+              display: "grid",
+              gap: "0.45rem"
+            }}
+          >
+            <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#475569", textTransform: "uppercase" }}>
+              Agregar insumo frecuente en 1 toque (+1 unid):
+            </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+              {INSUMOS_FRECUENTES.map((ins) => (
+                <button
+                  key={ins.nombre}
+                  type="button"
+                  onClick={() => agregarInsumoRapido(ins)}
+                  style={{
+                    padding: "0.32rem 0.65rem",
+                    borderRadius: "999px",
+                    border: "1px solid #94a3b8",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.25rem"
+                  }}
+                >
+                  <Plus size={13} color="#0284c7" />
+                  {ins.nombre}
+                </button>
+              ))}
             </div>
           </div>
 
