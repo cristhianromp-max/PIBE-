@@ -3,7 +3,8 @@ import {
   Camera, Search, Plus, Pencil, RefreshCw, ArrowLeft, ChevronRight,
   FolderOpen, Paperclip, Activity, FileText, X, Scissors, Receipt,
   LogOut, CheckCircle2, Trash2, Sparkles, Upload,
-  Bell, Clock, AlertTriangle, MessageCircle, ExternalLink, LayoutGrid
+  Bell, Clock, AlertTriangle, MessageCircle, ExternalLink, LayoutGrid,
+  Droplets, DollarSign
 } from "lucide-react";
 import { crearRepositorio, etiquetas, fechaCorta, fechaLocal, hora, edad, uuid } from "./datos.mjs";
 import { config, marca } from "./config";
@@ -14,6 +15,7 @@ import { AvatarPaciente, EditorFoto } from "./Identificacion.jsx";
 import { HojaHospital } from "./HojaHospital.jsx";
 import { PizarraHospital } from "./PizarraHospital.jsx";
 import { ModalDocumentosClinicos, PestanaRecetas } from "./DocumentosClinicos.jsx";
+import { CalculadoraFluidoterapia, PanelCuentasPorCobrar } from "./HerramientasClinicas.jsx";
 import { agendaDelDia, camposDe, extraerCampos } from "./registro.mjs";
 
 const repo = crearRepositorio(config);
@@ -2688,15 +2690,21 @@ function Historia({
   onSyncHosp,
   onAltaSuccess,
   onCambioNotificaciones,
-  onPacienteEliminado
+  onPacienteEliminado,
+  pestanaInicial = "clinica"
 }) {
   const android = globalThis.Capacitor?.getPlatform?.() === "android";
   const { p, atenciones, anexos } = ficha;
   const [filtro, Filtro] = useState("todos");
-  const [pestana, setPestana] = useState("clinica");
+  const [pestana, setPestana] = useState(pestanaInicial);
   const [altaTarget, setAltaTarget] = useState(null);
   const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false);
   const [mostrarDocs, setMostrarDocs] = useState(false);
+  const [mostrarFluidoterapia, setMostrarFluidoterapia] = useState(false);
+
+  useEffect(() => {
+    if (pestanaInicial) setPestana(pestanaInicial);
+  }, [pestanaInicial]);
 
   const ultima = atenciones.find((a) => a.peso != null);
   const profesionales = [...new Set(atenciones.map((a) => a.profesional).filter(Boolean))];
@@ -2757,9 +2765,14 @@ function Historia({
               </strong>
               <p className="ve-meta">Ingreso: {fechaCorta(admision.inicio)} · {admision.titulo}</p>
             </div>
-            <Boton principal icono={LogOut} onClick={() => setAltaTarget(admision)}>
-              Dar de alta médica
-            </Boton>
+            <div className="ve-actions" style={{ flexWrap: "wrap" }}>
+              <Boton icono={Droplets} onClick={() => setMostrarFluidoterapia(true)}>
+                Fluidoterapia
+              </Boton>
+              <Boton principal icono={LogOut} onClick={() => setAltaTarget(admision)}>
+                Dar de alta médica
+              </Boton>
+            </div>
           </div>
         )}
 
@@ -2817,6 +2830,33 @@ function Historia({
               verIngreso("");
               if (onAltaSuccess) onAltaSuccess(pid, msg);
               else recargar();
+            }}
+          />
+        )}
+
+        {mostrarFluidoterapia && (
+          <CalculadoraFluidoterapia
+            paciente={p}
+            pesoInicial={admision.peso ?? ultima?.peso ?? ""}
+            admision={admision}
+            cerrar={() => setMostrarFluidoterapia(false)}
+            onGuardarEnHospital={async (notaFluido) => {
+              const resumenActualizado = [admision.resumen, notaFluido].filter(Boolean).join("\n\n");
+              await repo.guardarAtencion({
+                id: admision.id,
+                paciente_id: p.id,
+                tipo: "hospitalizacion",
+                fecha_local: fechaLocal(admision.inicio || new Date()),
+                titulo: admision.titulo,
+                profesional: admision.profesional || "",
+                peso: admision.peso ?? "",
+                jaula: admision.jaula || "",
+                detalle_clinico: admision.detalle_clinico || {},
+                resumen: resumenActualizado,
+                version: admision.version || 0,
+                abierta: admision.abierta ?? true
+              });
+              recargar();
             }}
           />
         )}
@@ -3169,7 +3209,10 @@ function Historia({
 // APLICACIÓN RAÍZ
 // ============================================================================
 export default function App() {
-  const [vista, setVista] = useState("expedientes"); // "expedientes" | "pizarra"
+  const [vista, setVista] = useState("expedientes"); // "expedientes" | "pizarra" | "cobros"
+  const [pestanaHistoria, setPestanaHistoria] = useState("clinica");
+  const [calcRapidaAbierta, setCalcRapidaAbierta] = useState(false);
+
   const [q, Q] = useState("");
   const [pag, Pag] = useState(0);
   const [id, Id] = useState("");
@@ -3389,10 +3432,13 @@ export default function App() {
       if (dialogo) {
         e.preventDefault();
         dialogo.dispatchEvent(new Event("cancel", { cancelable: true, bubbles: false }));
+      } else if (calcRapidaAbierta) {
+        e.preventDefault();
+        setCalcRapidaAbierta(false);
       } else if (abrirNotif) {
         e.preventDefault();
         setAbrirNotif(false);
-      } else if (vista === "pizarra") {
+      } else if (vista === "pizarra" || vista === "cobros") {
         e.preventDefault();
         setVista("expedientes");
       } else if (ingresoId) {
@@ -3405,10 +3451,11 @@ export default function App() {
     }
     window.addEventListener("elpibe:volver", volverEnAndroid);
     return () => window.removeEventListener("elpibe:volver", volverEnAndroid);
-  }, [id, ingresoId, abrirNotif, vista]);
+  }, [id, ingresoId, abrirNotif, vista, calcRapidaAbierta]);
 
-  function seleccionar(v) {
+  function seleccionar(v, tab = "clinica") {
     setVista("expedientes");
+    setPestanaHistoria(tab);
     VerIngreso("");
     if (v !== id) F(null);
     EF("");
@@ -3418,6 +3465,7 @@ export default function App() {
 
   function abrirHojaDesdeSala(pacId, admId) {
     setVista("expedientes");
+    setPestanaHistoria("clinica");
     if (pacId !== id) F(null);
     EF("");
     Id(pacId);
@@ -3427,6 +3475,7 @@ export default function App() {
 
   function guardar(pid, msg, ingreso) {
     setVista("expedientes");
+    setPestanaHistoria("clinica");
     if (ingreso) {
       VerIngreso(ingreso);
       actualizarHospPaciente(pid, { activa: true, jaula: "", ubicacion: "" });
@@ -3515,6 +3564,54 @@ export default function App() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "0.55rem", flexWrap: "wrap" }}>
+            {/* Botón Calculadora rápida de Fluidoterapia */}
+            <button
+              type="button"
+              onClick={() => setCalcRapidaAbierta(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.35rem",
+                padding: "0.35rem 0.7rem",
+                borderRadius: "999px",
+                border: "1px solid #bae6fd",
+                background: "#f0f9ff",
+                color: "#0369a1",
+                fontWeight: 700,
+                fontSize: "0.8rem",
+                cursor: "pointer"
+              }}
+            >
+              <Droplets size={15} />
+              <span>Fluidoterapia</span>
+            </button>
+
+            {/* Botón Panel Global de Cuentas por Cobrar */}
+            <button
+              type="button"
+              onClick={() => {
+                const nuevaVista = vista === "cobros" ? "expedientes" : "cobros";
+                setVista(nuevaVista);
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.35rem",
+                padding: "0.35rem 0.75rem",
+                borderRadius: "999px",
+                border: vista === "cobros" ? "1.5px solid #d97706" : "1px solid #fde68a",
+                background: vista === "cobros" ? "#d97706" : "#fffbeb",
+                color: vista === "cobros" ? "#fff" : "#92400e",
+                fontWeight: 700,
+                fontSize: "0.8rem",
+                cursor: "pointer"
+              }}
+              aria-pressed={vista === "cobros"}
+            >
+              <DollarSign size={15} />
+              <span>{vista === "cobros" ? "Ver expedientes" : "Por cobrar"}</span>
+            </button>
+
             {/* Botón Pizarra General de Hospitalización */}
             <button
               type="button"
@@ -3638,7 +3735,15 @@ export default function App() {
           </div>
         )}
 
-        {vista === "pizarra" ? (
+        {vista === "cobros" ? (
+          <PanelCuentasPorCobrar
+            repo={repo}
+            revision={rev}
+            onAbrirCotizacionesPaciente={(pacId) => {
+              seleccionar(pacId, "cotizaciones");
+            }}
+          />
+        ) : vista === "pizarra" ? (
           <PizarraHospital
             pacientesSala={salaHospital}
             fotosRepo={repo.fotos}
@@ -3812,6 +3917,7 @@ export default function App() {
                   revision={rev}
                   recargar={recargar}
                   volver={() => seleccionar("")}
+                  pestanaInicial={pestanaHistoria}
                   onSyncHosp={actualizarHospPaciente}
                   onCambioNotificaciones={() => cargarDatosHospital()}
                   onAltaSuccess={(pid, msg) => {
@@ -3863,6 +3969,10 @@ export default function App() {
           </>
         )}
       </main>
+
+      {calcRapidaAbierta && (
+        <CalculadoraFluidoterapia cerrar={() => setCalcRapidaAbierta(false)} />
+      )}
 
       {abrirNotif && (
         <ModalCentroNotificaciones
