@@ -29,6 +29,15 @@ const VIAS_ADMINISTRACION = [
   "vía intranasal"
 ];
 
+const FRECUENCIAS_RECETA = [
+  "24 horas",
+  "12 horas",
+  "10 horas",
+  "8 horas",
+  "4 horas",
+  "2 horas"
+];
+
 function crearFilaReceta() {
   return {
     id: uuid(),
@@ -132,9 +141,14 @@ export function formatearItemReceta(item) {
     const freq = item.frecuencia.trim();
     partesIndicacion.push(/^cada\b/i.test(freq) ? freq : `cada ${freq}`);
   }
-  if (item.duracion?.trim()) {
-    const dur = item.duracion.trim();
-    partesIndicacion.push(/^(durante|por)\b/i.test(dur) ? dur : `durante ${dur}`);
+  if (item.duracion !== undefined && String(item.duracion).trim() !== "") {
+    const soloNumero = String(item.duracion).trim().replace(/\D/g, "");
+    if (soloNumero) {
+      partesIndicacion.push(`durante ${soloNumero} ${soloNumero === "1" ? "día" : "días"}`);
+    } else {
+      const dur = String(item.duracion).trim();
+      partesIndicacion.push(/^(durante|por)\b/i.test(dur) ? dur : `durante ${dur}`);
+    }
   }
 
   const instruccion =
@@ -196,7 +210,6 @@ function dividirLineasPdf(texto, maxChars) {
 }
 
 function dibujarLogoEnPdf(ops, x0, yTop) {
-  // 3 círculos + iconos vectoriales + nombre de la clínica
   const r = 14;
   const cy = yTop - 16;
   const c1x = x0 + 22;
@@ -213,13 +226,11 @@ function dibujarLogoEnPdf(ops, x0, yTop) {
     ops.push(`${(cx + k).toFixed(2)} ${(cy - r).toFixed(2)} ${(cx + r).toFixed(2)} ${(cy - k).toFixed(2)} ${(cx + r).toFixed(2)} ${cy.toFixed(2)} c S`);
   };
 
-  // Círculo 1: Cruz médica negra
   circulo(c1x, "0.13 0.13 0.13");
   ops.push(`0.13 0.13 0.13 rg`);
   ops.push(`${(c1x - 2.3).toFixed(2)} ${(cy - 7).toFixed(2)} 4.6 14 re f`);
   ops.push(`${(c1x - 7).toFixed(2)} ${(cy - 2.3).toFixed(2)} 14 4.6 re f`);
 
-  // Círculo 2: Huella en aro rojo
   circulo(c2x, "0.85 0.17 0.17");
   ops.push(`0.13 0.13 0.13 rg`);
   ops.push(`${(c2x - 4.5).toFixed(2)} ${(cy - 5.5).toFixed(2)} 9 5.5 re f`);
@@ -228,7 +239,6 @@ function dibujarLogoEnPdf(ops, x0, yTop) {
   ops.push(`${(c2x + 0.5).toFixed(2)} ${(cy + 3.2).toFixed(2)} 2.5 3.3 re f`);
   ops.push(`${(c2x + 4).toFixed(2)} ${(cy + 1).toFixed(2)} 2.5 3 re f`);
 
-  // Círculo 3: Pulso ECG en aro celeste
   circulo(c3x, "0.39 0.78 0.84");
   ops.push(`0.13 0.13 0.13 RG 1.7 w`);
   ops.push(`${(c3x - 10).toFixed(2)} ${cy.toFixed(2)} m`);
@@ -240,7 +250,6 @@ function dibujarLogoEnPdf(ops, x0, yTop) {
   ops.push(`${(c3x + 6).toFixed(2)} ${cy.toFixed(2)} l`);
   ops.push(`${(c3x + 10).toFixed(2)} ${cy.toFixed(2)} l S`);
 
-  // Texto institucional debajo de los 3 círculos
   ops.push(`0.13 0.13 0.13 rg`);
   ops.push(`BT /F3 10.5 Tf ${(x0 + 4).toFixed(2)} ${(yTop - 44).toFixed(2)} Td (CL\\315NICA VETERINARIA) Tj ET`);
   ops.push(`BT /F3 11.5 Tf ${(x0 + 42).toFixed(2)} ${(yTop - 57).toFixed(2)} Td (EL PIBE) Tj ET`);
@@ -273,10 +282,8 @@ export function generarArchivoPdfReceta({
       escribirTexto("/F1", 9.5, 345, 758, `Historia N.º: ${paciente.codigo || "S/N"}`);
       escribirTexto("/F2", 9.5, 345, 744, `Médico: ${medico || "Médico Veterinario"}`);
 
-      // Línea separadora cabecera
       ops.push(`0.12 0.16 0.23 RG 1.4 w 42 732 m 553 732 l S`);
 
-      // Cuadro datos paciente y propietario
       ops.push(`0.97 0.98 0.99 rg 42 666 511 58 re f`);
       ops.push(`0.80 0.84 0.88 RG 0.8 w 42 666 511 58 re S`);
       ops.push(`42 705 m 553 705 l S`);
@@ -361,7 +368,6 @@ export function generarArchivoPdfReceta({
     y -= 20;
   }
 
-  // Firma del médico al pie de la página actual
   const yFirma = Math.min(y - 34, 105);
   ops.push(`0.12 0.16 0.23 RG 1.1 w 330 ${yFirma.toFixed(2)} m 545 ${yFirma.toFixed(2)} l S`);
   escribirTexto("/F2", 9.8, 345, yFirma - 14, medico || "Médico Veterinario");
@@ -375,7 +381,6 @@ export function generarArchivoPdfReceta({
 
   paginas.push(ops.join("\n"));
 
-  // Ensamblaje binario del PDF 1.4
   const objetos = [];
   const agregarObj = (contenido) => {
     objetos.push(contenido);
@@ -474,7 +479,11 @@ export function ModalDocumentosClinicos({
   // Estado: Receta Médica
   const [filasRx, setFilasRx] = useState(() =>
     recetaInicial?.items?.length
-      ? recetaInicial.items.map((it) => ({ ...it, id: it.id || uuid() }))
+      ? recetaInicial.items.map((it) => ({
+          ...it,
+          id: it.id || uuid(),
+          duracion: String(it.duracion || "").replace(/\D/g, "")
+        }))
       : [crearFilaReceta(), crearFilaReceta()]
   );
   const [indicacionesGenerales, setIndicacionesGenerales] = useState(
@@ -1021,8 +1030,8 @@ export function ModalDocumentosClinicos({
                       <th style={{ padding: "0.45rem", width: "130px" }}># Cantidad</th>
                       <th style={{ padding: "0.45rem", width: "130px" }}>Vía</th>
                       <th style={{ padding: "0.45rem", width: "120px" }}>Dosis</th>
-                      <th style={{ padding: "0.45rem", width: "115px" }}>Cada (frec.)</th>
-                      <th style={{ padding: "0.45rem", width: "110px" }}>Durante</th>
+                      <th style={{ padding: "0.45rem", width: "125px" }}>Cada (frec.)</th>
+                      <th style={{ padding: "0.45rem", width: "115px" }}>Durante</th>
                       <th style={{ width: "32px" }}></th>
                     </tr>
                   </thead>
@@ -1070,22 +1079,35 @@ export function ModalDocumentosClinicos({
                           />
                         </td>
                         <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
+                          <select
                             value={fila.frecuencia}
                             onChange={(e) => actualizarFilaRx(fila.id, "frecuencia", e.target.value)}
-                            placeholder="12 horas"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
+                            style={{ width: "100%", padding: "0.38rem 0.35rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                          >
+                            <option value="">Seleccionar...</option>
+                            {FRECUENCIAS_RECETA.map((f) => (
+                              <option key={f} value={f}>
+                                {f}
+                              </option>
+                            ))}
+                            {fila.frecuencia && !FRECUENCIAS_RECETA.includes(fila.frecuencia) && (
+                              <option value={fila.frecuencia}>{fila.frecuencia}</option>
+                            )}
+                          </select>
                         </td>
                         <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.duracion}
-                            onChange={(e) => actualizarFilaRx(fila.id, "duracion", e.target.value)}
-                            placeholder="7 días"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                            <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              value={fila.duracion}
+                              onChange={(e) => actualizarFilaRx(fila.id, "duracion", e.target.value)}
+                              placeholder="20"
+                              style={{ width: "68px", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                            />
+                            <span style={{ fontSize: "0.8rem", color: "#475569", fontWeight: 600 }}>días</span>
+                          </div>
                         </td>
                         <td style={{ textAlign: "center" }}>
                           <button
