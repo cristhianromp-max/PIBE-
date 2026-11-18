@@ -3,7 +3,7 @@ import {
   Camera, Search, Plus, Pencil, RefreshCw, ArrowLeft, ChevronRight,
   FolderOpen, Paperclip, Activity, FileText, X, Scissors, Receipt,
   LogOut, CheckCircle2, Trash2, Sparkles, Upload,
-  Bell, Clock, AlertTriangle, Syringe, MessageCircle, ExternalLink
+  Bell, Clock, AlertTriangle, MessageCircle, ExternalLink
 } from "lucide-react";
 import { crearRepositorio, etiquetas, fechaCorta, fechaLocal, hora, edad, uuid } from "./datos.mjs";
 import { config, marca } from "./config";
@@ -140,6 +140,87 @@ function calcularEstadoDosis(item, ahoraMs) {
         ? "Toca ahora"
         : `En ${formatearTiempoRelativo(diffMin)} (${hora(proximaDate)})`
   };
+}
+
+function sumarDiasIso(isoFecha, dias) {
+  const [y, m, d] = isoFecha.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + dias));
+  return dt.toISOString().slice(0, 10);
+}
+
+function evaluarEstadoProcedimiento(item, ahoraMs) {
+  const diffMin = Math.round((item.slotTs - ahoraMs) / 60000);
+  const urgencia = diffMin < 0 ? "atrasado" : diffMin <= VENTANA_NOTIFICACION_MIN ? "proximo" : "programado";
+  return {
+    proximaDate: new Date(item.slotTs),
+    proximaHora: item.hor,
+    diffMin,
+    urgencia,
+    visibleEnNotificaciones: diffMin <= VENTANA_NOTIFICACION_MIN,
+    etiquetaTiempo:
+      diffMin < 0
+        ? `Atrasado ${formatearTiempoRelativo(Math.abs(diffMin))}`
+        : diffMin === 0
+        ? "Toca ahora"
+        : `En ${formatearTiempoRelativo(diffMin)} (${item.hor})`
+  };
+}
+
+function extraerAlertasProcedimientos(procs, pac, adm, ahoraMs) {
+  const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
+  const manana = sumarDiasIso(hoy, 1);
+  const alertas = [];
+
+  for (const proc of procs) {
+    if (proc.activa === false) continue;
+    const inicio = proc.fechaInicio || hoy;
+    const fin = proc.fechaFin || inicio;
+    const limiteFin = fin < manana ? fin : manana;
+    if (inicio > limiteFin) continue;
+
+    const createdTs = proc.creado ? Date.parse(proc.creado) : 0;
+    const horarios = Array.isArray(proc.horarios) && proc.horarios.length ? proc.horarios : ["09:00"];
+    let mejorSlot = null;
+    let cursor = inicio;
+
+    for (let i = 0; i < 65 && cursor <= limiteFin; i++, cursor = sumarDiasIso(cursor, 1)) {
+      for (const hor of horarios) {
+        const yaHecho = (proc.registros || []).some((r) => r.fechaDia === cursor && r.horario === hor);
+        if (yaHecho) continue;
+
+        let slotTs;
+        if (hor === "Única" || proc.frecuenciaCodigo === "unica") {
+          slotTs = createdTs || Date.parse(`${cursor}T09:00:00-05:00`);
+        } else {
+          slotTs = Date.parse(`${cursor}T${hor}:00-05:00`);
+          if (Number.isNaN(slotTs)) continue;
+          if (createdTs && slotTs < createdTs - 60 * 60000) continue;
+        }
+
+        const diffMin = Math.round((slotTs - ahoraMs) / 60000);
+        if (diffMin <= VENTANA_NOTIFICACION_MIN && (!mejorSlot || diffMin < mejorSlot.diffMin)) {
+          mejorSlot = { cursor, hor, slotTs, diffMin };
+        }
+      }
+    }
+
+    if (mejorSlot) {
+      alertas.push({
+        id: `proc_${proc.id}_${mejorSlot.cursor}_${mejorSlot.hor}`,
+        esProcedimiento: true,
+        pacienteId: pac.id,
+        pacienteNombre: pac.nombre,
+        admisionId: adm.id,
+        tipo: "Procedimiento",
+        producto: proc.nombre,
+        dosis: proc.indicaciones || proc.frecuenciaTexto,
+        hor: mejorSlot.hor,
+        slotTs: mejorSlot.slotTs
+      });
+    }
+  }
+
+  return alertas;
 }
 
 function SelectorJaula({ valor }) {
@@ -315,8 +396,8 @@ function ModalCentroNotificaciones({
             </h2>
             <p className="ve-meta">
               {pendientes.length === 0
-                ? "Sin medicaciones ni tratamientos tópicos pendientes en las próximas 3 horas."
-                : `${pendientes.length} paciente(s) requieren atención en menos de 3 horas.`}
+                ? "Sin medicaciones ni procedimientos pendientes en las próximas 3 horas."
+                : `${pendientes.length} atención(es) requieren atención en menos de 3 horas.`}
             </p>
           </div>
           <div className="ve-actions">
@@ -332,7 +413,7 @@ function ModalCentroNotificaciones({
             <div className="ve-empty" style={{ padding: "1.4rem 1rem" }}>
               <CheckCircle2 size={24} color="#16a34a" />
               <strong>Todo al día</strong>
-              <span>No hay pacientes por medicar ni tratamientos tópicos en menos de 3 horas.</span>
+              <span>No hay pacientes por medicar ni procedimientos pendientes en menos de 3 horas.</span>
             </div>
           ) : (
             pendientes.map((item) => {
@@ -1214,7 +1295,7 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
                           return (
                             <div key={ex.id} className="ve-row" style={{ fontSize: "0.84rem" }}>
                               <span>
-                                • {ex.nombre} <span className="ve-meta">({ex.fecha})</span>
+                                - {ex.nombre} <span className="ve-meta">({ex.fecha})</span>
                               </span>
                               {realAnexo && (
                                 <div className="ve-actions">
@@ -1579,7 +1660,6 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
   const [avisoCot, setAvisoCot] = useState("");
   const [errorCot, setErrorCot] = useState("");
 
-  // Cambios pendientes por N.º de cotización: { [numCot]: { estadoCobro?: string, saldoPendiente?: string } }
   const [cambiosCotizacion, setCambiosCotizacion] = useState({});
   const [guardandoEstados, setGuardandoEstados] = useState(false);
   const [cotizacionDetalleNum, setCotizacionDetalleNum] = useState("");
@@ -1672,7 +1752,6 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
     }
   }
 
-  // Agrupar ítems por número de cotización
   const gruposCotizaciones = (() => {
     const mapa = new Map();
     for (const it of lista) {
@@ -3046,8 +3125,31 @@ export default function App() {
   const cargarNotificaciones = useCallback(async (signal) => {
     setCargaNotif(true);
     try {
-      const items = await repo.notificaciones.listarActivas(signal);
-      setPautasActivas(items);
+      const [itemsMed, listadoPacs] = await Promise.all([
+        repo.notificaciones.listarActivas(signal),
+        repo.listar("", 0, signal).catch(() => ({ items: [] }))
+      ]);
+
+      const alertasProcs = [];
+      if (repo.modulos) {
+        const pacsHosp = (listadoPacs?.items || []).filter((p) =>
+          Boolean(p.hospitalizado || p.abierta || p.ingreso_activo)
+        );
+
+        await Promise.all(
+          pacsHosp.map(async (pac) => {
+            try {
+              const exp = await repo.expediente(pac.id, signal);
+              const adm = (exp?.atenciones || []).find((a) => a.tipo === "hospitalizacion" && a.abierta);
+              if (!adm) return;
+              const procs = await repo.modulos.listar(adm.id, "proc_hosp", signal);
+              alertasProcs.push(...extraerAlertasProcedimientos(procs || [], pac, adm, Date.now()));
+            } catch {}
+          })
+        );
+      }
+
+      setPautasActivas([...(itemsMed || []), ...alertasProcs]);
     } catch (e) {
       if (e.name !== "AbortError") console.error(e);
     } finally {
@@ -3181,7 +3283,9 @@ export default function App() {
   const pendientes3Horas = pautasActivas
     .map((item) => ({
       ...item,
-      estado: calcularEstadoDosis(item, relojTick)
+      estado: item.esProcedimiento
+        ? evaluarEstadoProcedimiento(item, relojTick)
+        : calcularEstadoDosis(item, relojTick)
     }))
     .filter((item) => item.estado.visibleEnNotificaciones)
     .sort((a, b) => a.estado.diffMin - b.estado.diffMin);
