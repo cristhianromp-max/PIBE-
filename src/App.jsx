@@ -13,7 +13,7 @@ import { CamposClinicos, ValoresClinicos } from "./CamposClinicos.jsx";
 import { AvatarPaciente, EditorFoto } from "./Identificacion.jsx";
 import { HojaHospital } from "./HojaHospital.jsx";
 import { PizarraHospital } from "./PizarraHospital.jsx";
-import { ModalDocumentosClinicos } from "./DocumentosClinicos.jsx";
+import { ModalDocumentosClinicos, PestanaRecetas } from "./DocumentosClinicos.jsx";
 import { agendaDelDia, camposDe, extraerCampos } from "./registro.mjs";
 
 const repo = crearRepositorio(config);
@@ -303,7 +303,7 @@ function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onElimina
     setEliminando(true);
     setError("");
     try {
-      const tiposModulos = ["cirugia", "cotizacion", "peluqueria"];
+      const tiposModulos = ["cirugia", "cotizacion", "peluqueria", "receta"];
       for (const tipo of tiposModulos) {
         try {
           const items = await repo.modulos.listar(paciente.id, tipo);
@@ -366,7 +366,7 @@ function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onElimina
           </p>
           <p style={{ margin: 0 }}>
             <strong>Advertencia:</strong> Se perderán todos los datos de manera definitiva, incluyendo su historia
-            clínica, hospitalizaciones, cirugías, cotizaciones y{" "}
+            clínica, hospitalizaciones, cirugías, cotizaciones, recetas y{" "}
             <strong>todos los exámenes y archivos subidos a la nube ({anexos.length})</strong>. Esta acción no se puede
             deshacer.
           </p>
@@ -2824,6 +2824,7 @@ function Historia({
     );
   }
 
+  const soloExamenes = anexos.filter((x) => !String(x.nombre || "").startsWith("Receta_"));
   const enlaceWhatsApp = obtenerEnlaceWhatsApp(p.telefono);
 
   const campos = [
@@ -2969,7 +2970,10 @@ function Historia({
               Peluquería
             </Boton>
             <Boton principal={pestana === "examenes"} icono={Paperclip} onClick={() => setPestana("examenes")}>
-              Exámenes ({anexos.length})
+              Exámenes ({soloExamenes.length})
+            </Boton>
+            <Boton principal={pestana === "recetas"} icono={FileText} onClick={() => setPestana("recetas")}>
+              Recetas
             </Boton>
           </div>
         </section>
@@ -3078,8 +3082,8 @@ function Historia({
               </Boton>
             )}
           </div>
-          {anexos.length ? (
-            anexos.map((x) => (
+          {soloExamenes.length ? (
+            soloExamenes.map((x) => (
               <div className="ve-archivo" key={x.id}>
                 <div>
                   <strong>{x.nombre}</strong>
@@ -3103,6 +3107,18 @@ function Historia({
             </p>
           )}
         </section>
+      )}
+
+      {pestana === "recetas" && (
+        <PestanaRecetas
+          paciente={p}
+          atenciones={atenciones}
+          anexos={anexos}
+          profesionales={profesionales}
+          repo={repo}
+          revision={revision}
+          onRecargar={recargar}
+        />
       )}
 
       {altaTarget && (
@@ -3137,7 +3153,12 @@ function Historia({
           paciente={p}
           atenciones={atenciones}
           profesionales={profesionales}
+          repo={repo}
           cerrar={() => setMostrarDocs(false)}
+          onRecetaGuardada={() => {
+            setPestana("recetas");
+            recargar();
+          }}
         />
       )}
     </div>
