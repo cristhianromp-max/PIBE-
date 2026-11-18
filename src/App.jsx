@@ -321,7 +321,14 @@ function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onElimina
       }
 
       if (typeof repo.eliminarPaciente === "function") {
-        await repo.eliminarPaciente(paciente.id, { atenciones, anexos });
+        try {
+          await repo.eliminarPaciente(paciente.id, { atenciones, anexos });
+        } catch (delErr) {
+          const msg = String(delErr?.message || delErr || "");
+          if (!/JSON\.parse|unexpected end|Unexpected end of JSON/i.test(msg)) {
+            throw delErr;
+          }
+        }
       } else {
         throw new Error(
           "Falta configurar la función 'eliminarPaciente' en datos.mjs para borrar archivos de la nube."
