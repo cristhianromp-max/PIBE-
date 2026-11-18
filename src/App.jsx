@@ -13,6 +13,7 @@ import { CamposClinicos, ValoresClinicos } from "./CamposClinicos.jsx";
 import { AvatarPaciente, EditorFoto } from "./Identificacion.jsx";
 import { HojaHospital } from "./HojaHospital.jsx";
 import { PizarraHospital } from "./PizarraHospital.jsx";
+import { ModalDocumentosClinicos } from "./DocumentosClinicos.jsx";
 import { agendaDelDia, camposDe, extraerCampos } from "./registro.mjs";
 
 const repo = crearRepositorio(config);
@@ -2695,6 +2696,7 @@ function Historia({
   const [pestana, setPestana] = useState("clinica");
   const [altaTarget, setAltaTarget] = useState(null);
   const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false);
+  const [mostrarDocs, setMostrarDocs] = useState(false);
 
   const ultima = atenciones.find((a) => a.peso != null);
   const profesionales = [...new Set(atenciones.map((a) => a.profesional).filter(Boolean))];
@@ -2889,6 +2891,9 @@ function Historia({
               </div>
 
               <div className="ve-actions" style={{ flexWrap: "wrap" }}>
+                <Boton principal icono={FileText} onClick={() => setMostrarDocs(true)}>
+                  Recetas y docs
+                </Boton>
                 <Boton icono={Camera} onClick={() => editarFoto()}>
                   {p.foto_id ? "Cambiar foto" : "Añadir foto"}
                 </Boton>
@@ -3124,6 +3129,15 @@ function Historia({
             setMostrarModalEliminar(false);
             if (onPacienteEliminado) onPacienteEliminado(pid, nombreEliminado);
           }}
+        />
+      )}
+
+      {mostrarDocs && (
+        <ModalDocumentosClinicos
+          paciente={p}
+          atenciones={atenciones}
+          profesionales={profesionales}
+          cerrar={() => setMostrarDocs(false)}
         />
       )}
     </div>
