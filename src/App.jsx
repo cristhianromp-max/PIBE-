@@ -3,7 +3,7 @@ import {
   Camera, Search, Plus, Pencil, RefreshCw, ArrowLeft, ChevronRight,
   FolderOpen, Paperclip, Activity, FileText, X, Scissors, Receipt,
   LogOut, CheckCircle2, Trash2, Sparkles, Upload,
-  Bell, Clock, AlertTriangle, MessageCircle, ExternalLink
+  Bell, Clock, AlertTriangle, MessageCircle, ExternalLink, LayoutGrid
 } from "lucide-react";
 import { crearRepositorio, etiquetas, fechaCorta, fechaLocal, hora, edad, uuid } from "./datos.mjs";
 import { config, marca } from "./config";
@@ -12,6 +12,7 @@ import { Boton, Campo } from "./Campos.jsx";
 import { CamposClinicos, ValoresClinicos } from "./CamposClinicos.jsx";
 import { AvatarPaciente, EditorFoto } from "./Identificacion.jsx";
 import { HojaHospital } from "./HojaHospital.jsx";
+import { PizarraHospital } from "./PizarraHospital.jsx";
 import { agendaDelDia, camposDe, extraerCampos } from "./registro.mjs";
 
 const repo = crearRepositorio(config);
@@ -44,7 +45,7 @@ function obtenerEnlaceWhatsApp(telefono) {
 }
 
 // ============================================================================
-// UTILIDADES DE CÁLCULO DE HORARIOS (VENTANA < 3 HORAS)
+// UTILIDADES DE CÁLCULO DE HORARIOS (VENTANA < 3 HORAS Y PIZARRA)
 // ============================================================================
 function parsearFechaEcuador(str, ahoraMs = Date.now()) {
   if (!str) return null;
@@ -177,7 +178,7 @@ function evaluarEstadoSlot(item, ahoraMs) {
   };
 }
 
-function extraerAlertasMedicacion(hojaHoy, hojaManana, pac, adm, ahoraMs) {
+function extraerPendientesMedicacion(hojaHoy, hojaManana, pac, adm, ahoraMs) {
   const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
   const manana = sumarDiasIso(hoy, 1);
 
@@ -187,7 +188,7 @@ function extraerAlertasMedicacion(hojaHoy, hojaManana, pac, adm, ahoraMs) {
   ];
 
   const vistos = new Set();
-  const alertas = [];
+  const lista = [];
 
   for (const slot of slotsBrutos) {
     const { orden, programada, toma } = slot;
@@ -205,33 +206,28 @@ function extraerAlertasMedicacion(hojaHoy, hojaManana, pac, adm, ahoraMs) {
     const slotDate = parsearFechaEcuador(programada, ahoraMs);
     if (!slotDate) continue;
 
-    const slotTs = slotDate.getTime();
-    const diffMin = Math.round((slotTs - ahoraMs) / 60000);
-
-    if (diffMin <= VENTANA_NOTIFICACION_MIN) {
-      alertas.push({
-        id: `med_${orden.id}_${programada}`,
-        ordenId: orden.id,
-        esAgendaHoja: true,
-        pacienteId: pac.id,
-        pacienteNombre: pac.nombre,
-        admisionId: adm.id,
-        tipo: "Medicación",
-        producto: orden.medicina,
-        dosis: [orden.dosis, orden.via].filter(Boolean).join(" · "),
-        hor: hora(slotDate),
-        slotTs
-      });
-    }
+    lista.push({
+      id: `med_${orden.id}_${programada}`,
+      ordenId: orden.id,
+      esAgendaHoja: true,
+      pacienteId: pac.id,
+      pacienteNombre: pac.nombre,
+      admisionId: adm.id,
+      tipo: "Medicación",
+      producto: orden.medicina,
+      dosis: [orden.dosis, orden.via].filter(Boolean).join(" · "),
+      hor: hora(slotDate),
+      slotTs: slotDate.getTime()
+    });
   }
 
-  return alertas;
+  return lista;
 }
 
-function extraerAlertasProcedimientos(procs, pac, adm, ahoraMs) {
+function extraerPendientesProcedimientos(procs, pac, adm, ahoraMs) {
   const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
   const manana = sumarDiasIso(hoy, 1);
-  const alertas = [];
+  const lista = [];
 
   for (const proc of procs) {
     if (proc.activa === false) continue;
@@ -242,7 +238,6 @@ function extraerAlertasProcedimientos(procs, pac, adm, ahoraMs) {
 
     const createdTs = proc.creado ? Date.parse(proc.creado) : 0;
     const horarios = Array.isArray(proc.horarios) && proc.horarios.length ? proc.horarios : ["09:00"];
-    let mejorSlot = null;
     let cursor = inicio;
 
     for (let i = 0; i < 65 && cursor <= limiteFin; i++, cursor = sumarDiasIso(cursor, 1)) {
@@ -259,30 +254,23 @@ function extraerAlertasProcedimientos(procs, pac, adm, ahoraMs) {
           if (createdTs && slotTs < createdTs - 60 * 60000) continue;
         }
 
-        const diffMin = Math.round((slotTs - ahoraMs) / 60000);
-        if (diffMin <= VENTANA_NOTIFICACION_MIN && (!mejorSlot || diffMin < mejorSlot.diffMin)) {
-          mejorSlot = { cursor, hor, slotTs, diffMin };
-        }
+        lista.push({
+          id: `proc_${proc.id}_${cursor}_${hor}`,
+          esProcedimiento: true,
+          pacienteId: pac.id,
+          pacienteNombre: pac.nombre,
+          admisionId: adm.id,
+          tipo: "Procedimiento",
+          producto: proc.nombre,
+          dosis: proc.indicaciones || proc.frecuenciaTexto,
+          hor,
+          slotTs
+        });
       }
-    }
-
-    if (mejorSlot) {
-      alertas.push({
-        id: `proc_${proc.id}_${mejorSlot.cursor}_${mejorSlot.hor}`,
-        esProcedimiento: true,
-        pacienteId: pac.id,
-        pacienteNombre: pac.nombre,
-        admisionId: adm.id,
-        tipo: "Procedimiento",
-        producto: proc.nombre,
-        dosis: proc.indicaciones || proc.frecuenciaTexto,
-        hor: mejorSlot.hor,
-        slotTs: mejorSlot.slotTs
-      });
     }
   }
 
-  return alertas;
+  return lista;
 }
 
 function SelectorJaula({ valor }) {
@@ -3146,6 +3134,7 @@ function Historia({
 // APLICACIÓN RAÍZ
 // ============================================================================
 export default function App() {
+  const [vista, setVista] = useState("expedientes"); // "expedientes" | "pizarra"
   const [q, Q] = useState("");
   const [pag, Pag] = useState(0);
   const [id, Id] = useState("");
@@ -3160,8 +3149,9 @@ export default function App() {
   const [hospMapa, setHospMapa] = useState({});
   const [fotosMapa, setFotosMapa] = useState({});
 
-  // Estado del Centro de Notificaciones
+  // Estado del Centro de Notificaciones y Pizarra de Sala
   const [pautasActivas, setPautasActivas] = useState([]);
+  const [salaHospital, setSalaHospital] = useState([]);
   const [cargaNotif, setCargaNotif] = useState(false);
   const [abrirNotif, setAbrirNotif] = useState(false);
   const [relojTick, setRelojTick] = useState(() => Date.now());
@@ -3184,14 +3174,14 @@ export default function App() {
     });
   }, []);
 
-  const cargarNotificaciones = useCallback(async (signal) => {
+  const cargarDatosHospital = useCallback(async (signal) => {
     setCargaNotif(true);
     try {
       const ahoraMs = Date.now();
       const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
       const manana = sumarDiasIso(hoy, 1);
 
-      const itemsLegacy = await repo.notificaciones?.listarActivas
+      const itemsLegacy = repo.notificaciones?.listarActivas
         ? await repo.notificaciones.listarActivas(signal).catch(() => [])
         : [];
 
@@ -3216,6 +3206,7 @@ export default function App() {
       );
 
       const alertasHoja = [];
+      const tarjetasSala = [];
       const ordenesRevisadas = new Set();
 
       await Promise.all(
@@ -3232,13 +3223,33 @@ export default function App() {
               repo.modulos ? repo.modulos.listar(adm.id, "proc_hosp", signal).catch(() => []) : Promise.resolve([])
             ]);
 
+            const medsPendientes = hojaHoy
+              ? extraerPendientesMedicacion(hojaHoy, hojaManana, pacReal, adm, ahoraMs)
+              : [];
+            const procsPendientes =
+              Array.isArray(procs) && procs.length > 0
+                ? extraerPendientesProcedimientos(procs, pacReal, adm, ahoraMs)
+                : [];
+
             if (hojaHoy) {
               for (const o of hojaHoy.ordenes || []) ordenesRevisadas.add(o.id);
-              alertasHoja.push(...extraerAlertasMedicacion(hojaHoy, hojaManana, pacReal, adm, ahoraMs));
             }
-            if (Array.isArray(procs) && procs.length > 0) {
-              alertasHoja.push(...extraerAlertasProcedimientos(procs, pacReal, adm, ahoraMs));
-            }
+
+            const todosPendientesPaciente = [...medsPendientes, ...procsPendientes].sort(
+              (a, b) => a.slotTs - b.slotTs
+            );
+            alertasHoja.push(...todosPendientesPaciente);
+
+            const notasOrdenadas = [...(hojaHoy?.notas || [])].sort(
+              (a, b) => Date.parse(b.momento || 0) - Date.parse(a.momento || 0)
+            );
+
+            tarjetasSala.push({
+              pac: pacReal,
+              adm,
+              pendientes: todosPendientesPaciente,
+              ultimaNota: notasOrdenadas[0] || null
+            });
           } catch {}
         })
       );
@@ -3249,6 +3260,7 @@ export default function App() {
       });
 
       setPautasActivas([...alertasHoja, ...extrasLegacy]);
+      setSalaHospital(tarjetasSala);
     } catch (e) {
       if (e.name !== "AbortError") console.error(e);
     } finally {
@@ -3258,18 +3270,18 @@ export default function App() {
 
   useEffect(() => {
     const ac = new AbortController();
-    cargarNotificaciones(ac.signal);
+    cargarDatosHospital(ac.signal);
     return () => ac.abort();
-  }, [cargarNotificaciones, rev]);
+  }, [cargarDatosHospital, rev]);
 
   useEffect(() => {
     const tReloj = setInterval(() => setRelojTick(Date.now()), 30000);
-    const tSync = setInterval(() => cargarNotificaciones(), 60000);
+    const tSync = setInterval(() => cargarDatosHospital(), 60000);
     return () => {
       clearInterval(tReloj);
       clearInterval(tSync);
     };
-  }, [cargarNotificaciones]);
+  }, [cargarDatosHospital]);
 
   useEffect(() => {
     const fn = () => recargar();
@@ -3345,6 +3357,9 @@ export default function App() {
       } else if (abrirNotif) {
         e.preventDefault();
         setAbrirNotif(false);
+      } else if (vista === "pizarra") {
+        e.preventDefault();
+        setVista("expedientes");
       } else if (ingresoId) {
         e.preventDefault();
         VerIngreso("");
@@ -3355,9 +3370,10 @@ export default function App() {
     }
     window.addEventListener("elpibe:volver", volverEnAndroid);
     return () => window.removeEventListener("elpibe:volver", volverEnAndroid);
-  }, [id, ingresoId, abrirNotif]);
+  }, [id, ingresoId, abrirNotif, vista]);
 
   function seleccionar(v) {
+    setVista("expedientes");
     VerIngreso("");
     if (v !== id) F(null);
     EF("");
@@ -3365,7 +3381,17 @@ export default function App() {
     A("");
   }
 
+  function abrirHojaDesdeSala(pacId, admId) {
+    setVista("expedientes");
+    if (pacId !== id) F(null);
+    EF("");
+    Id(pacId);
+    VerIngreso(admId || "activa");
+    A("");
+  }
+
   function guardar(pid, msg, ingreso) {
+    setVista("expedientes");
     if (ingreso) {
       VerIngreso(ingreso);
       actualizarHospPaciente(pid, { activa: true, jaula: "", ubicacion: "" });
@@ -3448,17 +3474,56 @@ export default function App() {
     <div className="ve-app">
       <header className="ve-header">
         <div className="ve-bar">
-          <div className="ve-brand">
+          <div className="ve-brand" style={{ cursor: "pointer" }} onClick={() => setVista("expedientes")}>
             <img src={marca} alt="Clínica Veterinaria El Pibe" />
             <b>Área clínica</b>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "0.55rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.55rem", flexWrap: "wrap" }}>
+            {/* Botón Pizarra General de Hospitalización */}
+            <button
+              type="button"
+              onClick={() => {
+                const nuevaVista = vista === "pizarra" ? "expedientes" : "pizarra";
+                setVista(nuevaVista);
+                if (nuevaVista === "pizarra") cargarDatosHospital();
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.4rem",
+                padding: "0.35rem 0.75rem",
+                borderRadius: "999px",
+                border: vista === "pizarra" ? "1.5px solid #0f766e" : "1px solid #cbd5e1",
+                background: vista === "pizarra" ? "#0f766e" : "#f0fdfa",
+                color: vista === "pizarra" ? "#fff" : "#0f766e",
+                fontWeight: 700,
+                fontSize: "0.8rem",
+                cursor: "pointer"
+              }}
+              aria-pressed={vista === "pizarra"}
+            >
+              <LayoutGrid size={15} />
+              <span>{vista === "pizarra" ? "Ver expedientes" : "Pizarra sala"}</span>
+              <span
+                style={{
+                  background: vista === "pizarra" ? "rgba(255,255,255,0.22)" : "#0f766e",
+                  color: "#fff",
+                  borderRadius: "999px",
+                  padding: "0.05rem 0.45rem",
+                  fontSize: "0.73rem"
+                }}
+              >
+                {salaHospital.length}
+              </span>
+            </button>
+
+            {/* Botón Campana Por Medicar */}
             <button
               type="button"
               onClick={() => {
                 setAbrirNotif(true);
-                cargarNotificaciones();
+                cargarDatosHospital();
               }}
               style={{
                 display: "inline-flex",
@@ -3530,7 +3595,7 @@ export default function App() {
               principal
               onClick={() => {
                 setAbrirNotif(true);
-                cargarNotificaciones();
+                cargarDatosHospital();
               }}
             >
               Ver lista ({pendientes3Horas.length})
@@ -3538,215 +3603,230 @@ export default function App() {
           </div>
         )}
 
-        <div className="ve-row">
-          <div>
-            <h1 className="ve-heading">Expedientes clínicos</h1>
-            <p className="ve-sub">
-              {repo.demo
-                ? "Datos ficticios. Los cambios duran mientras esta vista está abierta."
-                : "Directorio e historia clínica compartida."}
-            </p>
-          </div>
-          <div className="ve-actions">
-            <Boton icono={RefreshCw} aria-label="Actualizar expedientes" onClick={recargar} />
-            <Boton principal icono={Plus} onClick={() => M({ clase: "paciente", d: {} })}>
-              Nuevo paciente
-            </Boton>
-          </div>
-        </div>
-
-        {aviso && (
-          <p className="ve-confirm" role="status">
-            {aviso}
-          </p>
-        )}
-
-        <div className={"ve-main " + (id ? "has-patient" : "")}>
-          <div style={{ display: "grid", gap: "1rem", alignContent: "start" }}>
-            <section className="ve-panel ve-directory">
-              <div className="ve-pad">
-                <h2>Pacientes</h2>
-                <div className="ve-search">
-                  <Search size={17} />
-                  <input
-                    type="search"
-                    value={q}
-                    aria-label="Buscar por paciente, propietario o cédula"
-                    placeholder="Paciente, propietario o cédula"
-                    onChange={(e) => {
-                      Q(e.target.value);
-                      Pag(0);
-                      seleccionar("");
-                    }}
-                  />
-                </div>
-
-                <div className="ve-actions" style={{ marginTop: "0.55rem", flexWrap: "wrap", gap: "0.35rem" }}>
-                  <button
-                    type="button"
-                    onClick={() => setFiltroDir("todos")}
-                    className={filtroDir === "todos" ? "ve-button" : "ve-link"}
-                    style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
-                  >
-                    Todos ({resultado.items.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFiltroDir("hospitalizados")}
-                    className={filtroDir === "hospitalizados" ? "ve-button" : "ve-link"}
-                    style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
-                  >
-                    Hospitalizados ({pacientesHosp.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFiltroDir("otros")}
-                    className={filtroDir === "otros" ? "ve-button" : "ve-link"}
-                    style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
-                  >
-                    Otros ({pacientesOtros.length})
-                  </button>
-                </div>
-
-                <span role="status" className="ve-meta" style={{ display: "block", marginTop: "0.35rem" }}>
-                  {resultado.carga ? "Buscando…" : resultado.items.length + " en esta página"}
-                </span>
+        {vista === "pizarra" ? (
+          <PizarraHospital
+            pacientesSala={salaHospital}
+            fotosRepo={repo.fotos}
+            cargando={cargaNotif}
+            relojTick={relojTick}
+            onRefrescar={() => cargarDatosHospital()}
+            onAbrirHoja={(pacId, admId) => abrirHojaDesdeSala(pacId, admId)}
+            onAbrirExpediente={(pacId) => seleccionar(pacId)}
+          />
+        ) : (
+          <>
+            <div className="ve-row">
+              <div>
+                <h1 className="ve-heading">Expedientes clínicos</h1>
+                <p className="ve-sub">
+                  {repo.demo
+                    ? "Datos ficticios. Los cambios duran mientras esta vista está abierta."
+                    : "Directorio e historia clínica compartida."}
+                </p>
               </div>
-
-              <div className="ve-patients">
-                {(filtroDir === "todos" || filtroDir === "hospitalizados") && pacientesHosp.length > 0 && (
-                  <>
-                    <div
-                      style={{
-                        padding: "0.35rem 0.85rem",
-                        background: "#fef2f2",
-                        color: "#991b1b",
-                        fontSize: "0.72rem",
-                        fontWeight: 800,
-                        letterSpacing: "0.04em",
-                        textTransform: "uppercase",
-                        borderTop: "1px solid #fecaca",
-                        borderBottom: "1px solid #fecaca"
-                      }}
-                    >
-                      Hospitalizados ({pacientesHosp.length})
-                    </div>
-                    {pacientesHosp.map((p) => renderBotonPaciente(p, true))}
-                  </>
-                )}
-
-                {(filtroDir === "todos" || filtroDir === "otros") && pacientesOtros.length > 0 && (
-                  <>
-                    {pacientesHosp.length > 0 && filtroDir === "todos" && (
-                      <div
-                        style={{
-                          padding: "0.35rem 0.85rem",
-                          background: "#f1f5f9",
-                          color: "#475569",
-                          fontSize: "0.72rem",
-                          fontWeight: 800,
-                          letterSpacing: "0.04em",
-                          textTransform: "uppercase",
-                          borderTop: "1px solid #e2e8f0",
-                          borderBottom: "1px solid #e2e8f0"
-                        }}
-                      >
-                        Consulta externa / Otros ({pacientesOtros.length})
-                      </div>
-                    )}
-                    {pacientesOtros.map((p) => renderBotonPaciente(p, false))}
-                  </>
-                )}
-              </div>
-
-              {resultado.error ? (
-                <div className="ve-empty" role="alert">
-                  {resultado.error}
-                  <Boton onClick={recargar}>Reintentar</Boton>
-                </div>
-              ) : (
-                !resultado.carga &&
-                !resultado.items.length && (
-                  <div className="ve-empty">
-                    <strong>{q ? "Sin coincidencias" : "Directorio vacío"}</strong>
-                    <span>{q ? "Prueba con otro nombre o cédula." : "Usa Nuevo paciente para abrir la primera ficha."}</span>
-                  </div>
-                )
-              )}
-
-              {(pag > 0 || resultado.mas) && (
-                <div className="ve-actions ve-pad">
-                  {pag > 0 && <Boton onClick={() => Pag((n) => n - 1)}>Anterior</Boton>}
-                  {resultado.mas && <Boton onClick={() => Pag((n) => n + 1)}>Siguiente</Boton>}
-                </div>
-              )}
-            </section>
-
-            {/* Pestaña / Panel de Banco de Documentos debajo de Pacientes */}
-            <BancoDocumentos
-              pacientesLista={resultado.items}
-              revision={rev}
-              onSeleccionarPaciente={(pacId) => seleccionar(pacId)}
-            />
-          </div>
-
-          {id && ficha?.p?.id === id ? (
-            <Historia
-              key={id}
-              ficha={ficha}
-              abrir={M}
-              ingresoId={ingresoId}
-              verIngreso={VerIngreso}
-              revision={rev}
-              recargar={recargar}
-              volver={() => seleccionar("")}
-              onSyncHosp={actualizarHospPaciente}
-              onCambioNotificaciones={() => cargarNotificaciones()}
-              onAltaSuccess={(pid, msg) => {
-                actualizarHospPaciente(pid, { activa: false });
-                A(msg);
-                recargar();
-              }}
-              onPacienteEliminado={(pid, nombreEliminado) => {
-                VerIngreso("");
-                F(null);
-                EF("");
-                Id("");
-                R((prev) => ({
-                  ...prev,
-                  items: prev.items.filter((item) => item.id !== pid)
-                }));
-                setHospMapa((prev) => {
-                  const copia = { ...prev };
-                  delete copia[pid];
-                  return copia;
-                });
-                setFotosMapa((prev) => {
-                  const copia = { ...prev };
-                  delete copia[pid];
-                  return copia;
-                });
-                setPautasActivas((prev) => prev.filter((item) => item.pacienteId !== pid));
-                A(`Paciente "${nombreEliminado}" y todos sus exámenes fueron eliminados definitivamente.`);
-                recargar();
-              }}
-            />
-          ) : (
-            <div className="ve-paper">
-              <div className="ve-panel ve-empty">
-                <FolderOpen size={26} />
-                <h2>{errFicha || (!id ? "Selecciona un paciente" : "Cargando ficha…")}</h2>
-                {!id && <span>Su historia aparecerá aquí.</span>}
-                {errFicha && (
-                  <>
-                    <Boton onClick={recargar}>Reintentar</Boton>
-                    <Boton onClick={() => seleccionar("")}>Volver</Boton>
-                  </>
-                )}
+              <div className="ve-actions">
+                <Boton icono={RefreshCw} aria-label="Actualizar expedientes" onClick={recargar} />
+                <Boton principal icono={Plus} onClick={() => M({ clase: "paciente", d: {} })}>
+                  Nuevo paciente
+                </Boton>
               </div>
             </div>
-          )}
-        </div>
+
+            {aviso && (
+              <p className="ve-confirm" role="status">
+                {aviso}
+              </p>
+            )}
+
+            <div className={"ve-main " + (id ? "has-patient" : "")}>
+              <div style={{ display: "grid", gap: "1rem", alignContent: "start" }}>
+                <section className="ve-panel ve-directory">
+                  <div className="ve-pad">
+                    <h2>Pacientes</h2>
+                    <div className="ve-search">
+                      <Search size={17} />
+                      <input
+                        type="search"
+                        value={q}
+                        aria-label="Buscar por paciente, propietario o cédula"
+                        placeholder="Paciente, propietario o cédula"
+                        onChange={(e) => {
+                          Q(e.target.value);
+                          Pag(0);
+                          seleccionar("");
+                        }}
+                      />
+                    </div>
+
+                    <div className="ve-actions" style={{ marginTop: "0.55rem", flexWrap: "wrap", gap: "0.35rem" }}>
+                      <button
+                        type="button"
+                        onClick={() => setFiltroDir("todos")}
+                        className={filtroDir === "todos" ? "ve-button" : "ve-link"}
+                        style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
+                      >
+                        Todos ({resultado.items.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFiltroDir("hospitalizados")}
+                        className={filtroDir === "hospitalizados" ? "ve-button" : "ve-link"}
+                        style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
+                      >
+                        Hospitalizados ({pacientesHosp.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFiltroDir("otros")}
+                        className={filtroDir === "otros" ? "ve-button" : "ve-link"}
+                        style={{ fontSize: "0.75rem", padding: "0.25rem 0.55rem" }}
+                      >
+                        Otros ({pacientesOtros.length})
+                      </button>
+                    </div>
+
+                    <span role="status" className="ve-meta" style={{ display: "block", marginTop: "0.35rem" }}>
+                      {resultado.carga ? "Buscando…" : resultado.items.length + " en esta página"}
+                    </span>
+                  </div>
+
+                  <div className="ve-patients">
+                    {(filtroDir === "todos" || filtroDir === "hospitalizados") && pacientesHosp.length > 0 && (
+                      <>
+                        <div
+                          style={{
+                            padding: "0.35rem 0.85rem",
+                            background: "#fef2f2",
+                            color: "#991b1b",
+                            fontSize: "0.72rem",
+                            fontWeight: 800,
+                            letterSpacing: "0.04em",
+                            textTransform: "uppercase",
+                            borderTop: "1px solid #fecaca",
+                            borderBottom: "1px solid #fecaca"
+                          }}
+                        >
+                          Hospitalizados ({pacientesHosp.length})
+                        </div>
+                        {pacientesHosp.map((p) => renderBotonPaciente(p, true))}
+                      </>
+                    )}
+
+                    {(filtroDir === "todos" || filtroDir === "otros") && pacientesOtros.length > 0 && (
+                      <>
+                        {pacientesHosp.length > 0 && filtroDir === "todos" && (
+                          <div
+                            style={{
+                              padding: "0.35rem 0.85rem",
+                              background: "#f1f5f9",
+                              color: "#475569",
+                              fontSize: "0.72rem",
+                              fontWeight: 800,
+                              letterSpacing: "0.04em",
+                              textTransform: "uppercase",
+                              borderTop: "1px solid #e2e8f0",
+                              borderBottom: "1px solid #e2e8f0"
+                            }}
+                          >
+                            Consulta externa / Otros ({pacientesOtros.length})
+                          </div>
+                        )}
+                        {pacientesOtros.map((p) => renderBotonPaciente(p, false))}
+                      </>
+                    )}
+                  </div>
+
+                  {resultado.error ? (
+                    <div className="ve-empty" role="alert">
+                      {resultado.error}
+                      <Boton onClick={recargar}>Reintentar</Boton>
+                    </div>
+                  ) : (
+                    !resultado.carga &&
+                    !resultado.items.length && (
+                      <div className="ve-empty">
+                        <strong>{q ? "Sin coincidencias" : "Directorio vacío"}</strong>
+                        <span>{q ? "Prueba con otro nombre o cédula." : "Usa Nuevo paciente para abrir la primera ficha."}</span>
+                      </div>
+                    )
+                  )}
+
+                  {(pag > 0 || resultado.mas) && (
+                    <div className="ve-actions ve-pad">
+                      {pag > 0 && <Boton onClick={() => Pag((n) => n - 1)}>Anterior</Boton>}
+                      {resultado.mas && <Boton onClick={() => Pag((n) => n + 1)}>Siguiente</Boton>}
+                    </div>
+                  )}
+                </section>
+
+                {/* Pestaña / Panel de Banco de Documentos debajo de Pacientes */}
+                <BancoDocumentos
+                  pacientesLista={resultado.items}
+                  revision={rev}
+                  onSeleccionarPaciente={(pacId) => seleccionar(pacId)}
+                />
+              </div>
+
+              {id && ficha?.p?.id === id ? (
+                <Historia
+                  key={id}
+                  ficha={ficha}
+                  abrir={M}
+                  ingresoId={ingresoId}
+                  verIngreso={VerIngreso}
+                  revision={rev}
+                  recargar={recargar}
+                  volver={() => seleccionar("")}
+                  onSyncHosp={actualizarHospPaciente}
+                  onCambioNotificaciones={() => cargarDatosHospital()}
+                  onAltaSuccess={(pid, msg) => {
+                    actualizarHospPaciente(pid, { activa: false });
+                    A(msg);
+                    recargar();
+                  }}
+                  onPacienteEliminado={(pid, nombreEliminado) => {
+                    VerIngreso("");
+                    F(null);
+                    EF("");
+                    Id("");
+                    R((prev) => ({
+                      ...prev,
+                      items: prev.items.filter((item) => item.id !== pid)
+                    }));
+                    setHospMapa((prev) => {
+                      const copia = { ...prev };
+                      delete copia[pid];
+                      return copia;
+                    });
+                    setFotosMapa((prev) => {
+                      const copia = { ...prev };
+                      delete copia[pid];
+                      return copia;
+                    });
+                    setPautasActivas((prev) => prev.filter((item) => item.pacienteId !== pid));
+                    setSalaHospital((prev) => prev.filter((item) => item.pac.id !== pid));
+                    A(`Paciente "${nombreEliminado}" y todos sus exámenes fueron eliminados definitivamente.`);
+                    recargar();
+                  }}
+                />
+              ) : (
+                <div className="ve-paper">
+                  <div className="ve-panel ve-empty">
+                    <FolderOpen size={26} />
+                    <h2>{errFicha || (!id ? "Selecciona un paciente" : "Cargando ficha…")}</h2>
+                    {!id && <span>Su historia aparecerá aquí.</span>}
+                    {errFicha && (
+                      <>
+                        <Boton onClick={recargar}>Reintentar</Boton>
+                        <Boton onClick={() => seleccionar("")}>Volver</Boton>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </main>
 
       {abrirNotif && (
@@ -3754,12 +3834,9 @@ export default function App() {
           pendientes={pendientes3Horas}
           pacientesLista={resultado.items}
           cerrar={() => setAbrirNotif(false)}
-          onRefrescar={() => cargarNotificaciones()}
+          onRefrescar={() => cargarDatosHospital()}
           cargando={cargaNotif}
-          onIrAPaciente={(pacId, admId) => {
-            seleccionar(pacId);
-            VerIngreso(admId || "activa");
-          }}
+          onIrAPaciente={(pacId, admId) => abrirHojaDesdeSala(pacId, admId)}
         />
       )}
 
