@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   Plus,
   Pencil,
-  Check,
   RefreshCw,
   X,
   ClipboardList,
@@ -681,7 +680,6 @@ function SeccionTabularMedica({
 
   const esFechaValidaParaMarcar = hoja.abierta && dia <= fechaHoy();
 
-  // Agrupar agenda del día por orden (fármaco) para mostrarla en filas de tabla
   const filasAgenda = agendaDelDia(hoja, dia);
   const ordenesVivas = hoja.ordenes.filter((o) => {
     const st = estadoPauta(o, hoja.tomas);
@@ -733,8 +731,8 @@ function SeccionTabularMedica({
     setPendientesMed((prev) => {
       if (!prev[key]) return prev;
       return {
-        ...prev[key],
-        nota
+        ...prev,
+        [key]: { ...prev[key], nota }
       };
     });
   }
@@ -800,7 +798,6 @@ function SeccionTabularMedica({
     }
   }
 
-  // Filtrar procedimientos vigentes para el día seleccionado
   const procsDelDia = procedimientos.filter((p) => {
     if (p.activa === false) return false;
     if (p.fechaInicio && dia < p.fechaInicio) return false;
@@ -844,7 +841,6 @@ function SeccionTabularMedica({
       const ahora = fechaLocal();
       const realizadaIso = instanteEcuador(dia === fechaHoy() ? ahora : `${dia}T${ahora.slice(11)}`);
 
-      // Agrupar nuevas realizaciones por procedimiento
       const porProc = new Map();
       for (const [, item] of listaPendientesProc) {
         if (!porProc.has(item.proc.id)) {
@@ -916,7 +912,6 @@ function SeccionTabularMedica({
 
   return (
     <div className="ve-hoja-tabular-contenedor">
-      {/* Barra común de identificación de turno e internista */}
       <div className="ve-barra-internista">
         <div className="ve-internista-campo">
           <label htmlFor="ve-input-internista">Médico / Internista que administra</label>
@@ -1425,6 +1420,7 @@ export function HojaHospital({
     if (verDia) Dia(verDia);
     Aviso(mensaje);
     actualizar();
+    if (actualizarFicha) actualizarFicha();
   }
 
   const fotoId = paciente.foto_id || h?.foto_id || null,
@@ -1435,7 +1431,7 @@ export function HojaHospital({
     Resultado((prev) => prev && { ...prev, hoja: { ...prev.hoja, jaula: nueva } });
     Aviso("Jaula actualizada.");
     actualizar();
-    actualizarFicha();
+    if (actualizarFicha) actualizarFicha();
   }
 
   async function cambiarUbicacion(e) {
@@ -1475,11 +1471,9 @@ export function HojaHospital({
     )
   ];
 
-  // Unificar historial completo (tomas de Supabase + historialExtra + registros de procedimientos)
   const historialUnificado = (() => {
     const mapa = new Map();
 
-    // 1. Tomas devueltas por la hoja
     for (const t of h?.tomas || []) {
       const ord = (h?.ordenes || []).find((o) => o.id === t.orden_id);
       mapa.set(t.id, {
@@ -1494,7 +1488,6 @@ export function HojaHospital({
       });
     }
 
-    // 2. Registros dentro de cada procedimiento
     for (const proc of procedimientos) {
       for (const r of proc.registros || []) {
         if (!mapa.has(r.id)) {
@@ -1512,7 +1505,6 @@ export function HojaHospital({
       }
     }
 
-    // 3. Auditoría acumulada de todos los días (hosp_historial)
     for (const item of historialExtra) {
       if (!mapa.has(item.id)) {
         mapa.set(item.id, item);
@@ -1724,6 +1716,7 @@ export function HojaHospital({
                 onGuardadoExitoso={(msg) => {
                   Aviso(msg);
                   actualizar();
+                  if (actualizarFicha) actualizarFicha();
                 }}
                 pendientesMed={pendientesMed}
                 setPendientesMed={setPendientesMed}
