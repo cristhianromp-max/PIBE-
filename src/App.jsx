@@ -1552,17 +1552,24 @@ function PestanaCirugias({ paciente, atenciones, anexos, profesionales, onRecarg
 // PESTAÑA DE COTIZACIONES (AGRUPADA, CON INSUMOS RÁPIDOS Y SALDO PENDIENTE)
 // ============================================================================
 const INSUMOS_FRECUENTES = [
-  { nombre: "Jeringa 3 ml", tipoItem: "Insumo" },
-  { nombre: "Jeringa 5 ml", tipoItem: "Insumo" },
-  { nombre: "Catéter 24", tipoItem: "Material médico" },
-  { nombre: "Catéter 22", tipoItem: "Material médico" },
-  { nombre: "Venoclisis", tipoItem: "Material médico" },
-  { nombre: "Guantes", tipoItem: "Insumo" },
-  { nombre: "Nylon 2-0", tipoItem: "Material médico" },
-  { nombre: "Vycril 2-0", tipoItem: "Material médico" },
-  { nombre: "Vicryl 1-0", tipoItem: "Material médico" },
-  { nombre: "Bisturí", tipoItem: "Material médico" },
-  { nombre: "Gasa", tipoItem: "Insumo" }
+  { nombre: "Jeringa 3 ml", tipoItem: "Insumo", unidad: "unid" },
+  { nombre: "Jeringa 5 ml", tipoItem: "Insumo", unidad: "unid" },
+  { nombre: "Catéter 24", tipoItem: "Material médico", unidad: "unid" },
+  { nombre: "Catéter 22", tipoItem: "Material médico", unidad: "unid" },
+  { nombre: "Venoclisis", tipoItem: "Material médico", unidad: "unid" },
+  { nombre: "Guantes", tipoItem: "Insumo", unidad: "unid" },
+  { nombre: "Nylon 2-0", tipoItem: "Material médico", unidad: "unid" },
+  { nombre: "Vycril 2-0", tipoItem: "Material médico", unidad: "unid" },
+  { nombre: "Vicryl 1-0", tipoItem: "Material médico", unidad: "unid" },
+  { nombre: "Bisturí", tipoItem: "Material médico", unidad: "unid" },
+  { nombre: "Gasa", tipoItem: "Insumo", unidad: "unid" },
+  { nombre: "Ketamina", tipoItem: "Medicina", unidad: "ml" },
+  { nombre: "Anicedam", tipoItem: "Medicina", unidad: "ml" },
+  { nombre: "Propofol", tipoItem: "Medicina", unidad: "ml" },
+  { nombre: "Meloxicam", tipoItem: "Medicina", unidad: "ml" },
+  { nombre: "Oxitetraciclina", tipoItem: "Medicina", unidad: "ml" },
+  { nombre: "Lactato 1000", tipoItem: "Medicina", unidad: "unid" },
+  { nombre: "Cloruro 1000", tipoItem: "Medicina", unidad: "unid" }
 ];
 
 function crearFilasCotizacion() {
@@ -1757,7 +1764,8 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
     setFilasTabla((prev) => prev.map((f) => (f.id === filaId ? { ...f, [campo]: valor } : f)));
   }
 
-  function agregarInsumoRapido(insumo) {
+function agregarInsumoRapido(insumo) {
+    const unidadDefecto = insumo.unidad || "unid";
     setFilasTabla((prev) => {
       const idxExistente = prev.findIndex(
         (f) => f.descripcion.trim().toLowerCase() === insumo.nombre.toLowerCase()
@@ -1765,15 +1773,45 @@ function PestanaCotizaciones({ paciente, profesionales, revision }) {
       if (idxExistente !== -1) {
         return prev.map((f, idx) => {
           if (idx !== idxExistente) return f;
-          const matchNum = String(f.cantidad || "").trim().match(/^(\d+)\s*(.*)$/);
+          const matchNum = String(f.cantidad || "").trim().match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
           if (matchNum) {
-            const nuevaCant = parseInt(matchNum[1], 10) + 1;
-            const sufijo = matchNum[2] ? ` ${matchNum[2]}` : " unid";
+            const actual = parseFloat(matchNum[1].replace(",", ".")) || 0;
+            const nuevaCant = Number((actual + 1).toFixed(2));
+            const sufijo = matchNum[2] ? ` ${matchNum[2]}` : ` ${unidadDefecto}`;
             return { ...f, cantidad: `${nuevaCant}${sufijo}` };
           }
-          return { ...f, cantidad: f.cantidad ? f.cantidad : "1 unid" };
+          return { ...f, cantidad: f.cantidad ? f.cantidad : `1 ${unidadDefecto}` };
         });
       }
+
+      const idxVacia = prev.findIndex(
+        (f) => !f.descripcion.trim() && !f.cantidad.trim()
+      );
+      if (idxVacia !== -1) {
+        return prev.map((f, idx) =>
+          idx === idxVacia
+            ? {
+                ...f,
+                tipoItem: insumo.tipoItem,
+                descripcion: insumo.nombre,
+                cantidad: `1 ${unidadDefecto}`
+              }
+            : f
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          id: uuid(),
+          tipoItem: insumo.tipoItem,
+          descripcion: insumo.nombre,
+          cantidad: `1 ${unidadDefecto}`,
+          nota: ""
+        }
+      ];
+    });
+  }
 
       const idxVacia = prev.findIndex(
         (f) => !f.descripcion.trim() && !f.cantidad.trim()
