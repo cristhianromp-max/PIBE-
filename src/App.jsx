@@ -300,7 +300,7 @@ function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onElimina
     };
   }, []);
 
-  async function confirmarEliminacion() {
+ async function confirmarEliminacion() {
     if (eliminando) return;
     setEliminando(true);
     setError("");
@@ -310,9 +310,14 @@ function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onElimina
         try {
           const items = await repo.modulos.listar(paciente.id, tipo);
           await Promise.all(items.map((it) => repo.modulos.eliminar(it.id)));
-        } catch {
-          // Continuar si algún módulo no tiene registros
-        }
+        } catch {}
+      }
+
+      for (const at of atenciones || []) {
+        try {
+          const procs = await repo.modulos.listar(at.id, "proc_hosp");
+          await Promise.all(procs.map((pr) => repo.modulos.eliminar(pr.id)));
+        } catch {}
       }
 
       if (typeof repo.eliminarPaciente === "function") {
@@ -323,7 +328,7 @@ function ModalEliminarPaciente({ paciente, atenciones, anexos, cerrar, onElimina
         );
       }
 
-      onEliminado(paciente.id, paciente.nombre);
+      window.location.reload();
     } catch (err) {
       setError(err.message || "No se pudo eliminar el paciente.");
       setEliminando(false);
