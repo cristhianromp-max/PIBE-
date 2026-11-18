@@ -12,7 +12,7 @@ import { Boton, Campo } from "./Campos.jsx";
 import { CamposClinicos, ValoresClinicos } from "./CamposClinicos.jsx";
 import { AvatarPaciente, EditorFoto } from "./Identificacion.jsx";
 import { HojaHospital } from "./HojaHospital.jsx";
-import { camposDe, extraerCampos } from "./registro.mjs";
+import { agendaDelDia, camposDe, extraerCampos } from "./registro.mjs";
 
 const repo = crearRepositorio(config);
 
@@ -48,6 +48,7 @@ function obtenerEnlaceWhatsApp(telefono) {
 // ============================================================================
 function parsearFechaEcuador(str, ahoraMs = Date.now()) {
   if (!str) return null;
+  if (str instanceof Date) return Number.isNaN(str.getTime()) ? null : str;
   const limpia = String(str).trim();
   if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(limpia)) {
     const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
@@ -94,8 +95,11 @@ function formatearTiempoRelativo(minutosAbs) {
 }
 
 function calcularEstadoDosis(item, ahoraMs) {
-  const intervaloMin = parsearIntervaloMinutos(item.frecuencia);
-  const esDosisUnica = /\b(unica|única|stat|1\s*vez|una\s*vez)\b/i.test(String(item.frecuencia || ""));
+  const intervaloMin = item.intervalo_horas
+    ? Number(item.intervalo_horas) * 60
+    : parsearIntervaloMinutos(item.frecuencia);
+  const esDosisUnica =
+    item.pauta === "unica" || /\b(unica|única|stat|1\s*vez|una\s*vez)\b/i.test(String(item.frecuencia || ""));
 
   const appsParseadas = (item.aplicaciones || [])
     .map((ap) => {
@@ -110,7 +114,13 @@ function calcularEstadoDosis(item, ahoraMs) {
     proximaDate = new Date(appsParseadas[0].ts + intervaloMin * 60000);
   } else {
     proximaDate = parsearFechaEcuador(
-      item.proximaManual || item.proximaDosis || item.proxima || item.horaProgramada || item.fechaInicio,
+      item.programada ||
+        item.proximaManual ||
+        item.proximaDosis ||
+        item.proxima ||
+        item.horaProgramada ||
+        item.fechaInicio ||
+        item.inicio,
       ahoraMs
     );
   }
@@ -124,6 +134,7 @@ function calcularEstadoDosis(item, ahoraMs) {
 
   const visibleEnNotificaciones =
     item.activa !== false &&
+    !item.suspendida_en &&
     !(esDosisUnica && appsParseadas.length > 0) &&
     diffMin <= VENTANA_NOTIFICACION_MIN;
 
@@ -148,7 +159,7 @@ function sumarDiasIso(isoFecha, dias) {
   return dt.toISOString().slice(0, 10);
 }
 
-function evaluarEstadoProcedimiento(item, ahoraMs) {
+function evaluarEstadoSlot(item, ahoraMs) {
   const diffMin = Math.round((item.slotTs - ahoraMs) / 60000);
   const urgencia = diffMin < 0 ? "atrasado" : diffMin <= VENTANA_NOTIFICACION_MIN ? "proximo" : "programado";
   return {
@@ -164,6 +175,57 @@ function evaluarEstadoProcedimiento(item, ahoraMs) {
         ? "Toca ahora"
         : `En ${formatearTiempoRelativo(diffMin)} (${item.hor})`
   };
+}
+
+function extraerAlertasMedicacion(hojaHoy, hojaManana, pac, adm, ahoraMs) {
+  const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
+  const manana = sumarDiasIso(hoy, 1);
+
+  const slotsBrutos = [
+    ...(hojaHoy ? agendaDelDia(hojaHoy, hoy) : []),
+    ...(hojaManana ? agendaDelDia(hojaManana, manana) : [])
+  ];
+
+  const vistos = new Set();
+  const alertas = [];
+
+  for (const slot of slotsBrutos) {
+    const { orden, programada, toma } = slot;
+    if (!orden || !programada || toma) continue;
+    if (orden.suspendida_en) continue;
+
+    const clave = `${orden.id}|${programada}`;
+    if (vistos.has(clave)) continue;
+    vistos.add(clave);
+
+    if (orden.pauta === "unica" && (hojaHoy?.tomas || []).some((t) => t.orden_id === orden.id)) {
+      continue;
+    }
+
+    const slotDate = parsearFechaEcuador(programada, ahoraMs);
+    if (!slotDate) continue;
+
+    const slotTs = slotDate.getTime();
+    const diffMin = Math.round((slotTs - ahoraMs) / 60000);
+
+    if (diffMin <= VENTANA_NOTIFICACION_MIN) {
+      alertas.push({
+        id: `med_${orden.id}_${programada}`,
+        ordenId: orden.id,
+        esAgendaHoja: true,
+        pacienteId: pac.id,
+        pacienteNombre: pac.nombre,
+        admisionId: adm.id,
+        tipo: "Medicación",
+        producto: orden.medicina,
+        dosis: [orden.dosis, orden.via].filter(Boolean).join(" · "),
+        hor: hora(slotDate),
+        slotTs
+      });
+    }
+  }
+
+  return alertas;
 }
 
 function extraerAlertasProcedimientos(procs, pac, adm, ahoraMs) {
@@ -420,7 +482,7 @@ function ModalCentroNotificaciones({
               const pacEncontrado = pacientesLista.find((p) => p.id === item.pacienteId);
               const nombrePac = item.pacienteNombre || pacEncontrado?.nombre || "Paciente hospitalizado";
               const esAtrasado = item.estado.urgencia === "atrasado";
-              const producto = item.producto || item.medicamento || item.nombre || "Tratamiento";
+              const producto = item.producto || item.medicamento || item.medicina || item.nombre || "Tratamiento";
               const resumen = [item.tipo, producto, item.dosis].filter(Boolean).join(" · ");
 
               return (
@@ -3125,31 +3187,68 @@ export default function App() {
   const cargarNotificaciones = useCallback(async (signal) => {
     setCargaNotif(true);
     try {
-      const [itemsMed, listadoPacs] = await Promise.all([
-        repo.notificaciones.listarActivas(signal),
-        repo.listar("", 0, signal).catch(() => ({ items: [] }))
-      ]);
+      const ahoraMs = Date.now();
+      const hoy = fechaLocal(new Date(ahoraMs)).slice(0, 10);
+      const manana = sumarDiasIso(hoy, 1);
 
-      const alertasProcs = [];
-      if (repo.modulos) {
-        const pacsHosp = (listadoPacs?.items || []).filter((p) =>
-          Boolean(p.hospitalizado || p.abierta || p.ingreso_activo)
-        );
+      const itemsLegacy = await repo.notificaciones?.listarActivas
+        ? await repo.notificaciones.listarActivas(signal).catch(() => [])
+        : [];
 
-        await Promise.all(
-          pacsHosp.map(async (pac) => {
-            try {
-              const exp = await repo.expediente(pac.id, signal);
-              const adm = (exp?.atenciones || []).find((a) => a.tipo === "hospitalizacion" && a.abierta);
-              if (!adm) return;
-              const procs = await repo.modulos.listar(adm.id, "proc_hosp", signal);
-              alertasProcs.push(...extraerAlertasProcedimientos(procs || [], pac, adm, Date.now()));
-            } catch {}
-          })
-        );
+      const pacsMap = new Map();
+      for (let p = 0; p < 5; p++) {
+        const res = await repo.listar("", p, signal).catch(() => ({ items: [], mas: false }));
+        for (const pac of res?.items || []) {
+          pacsMap.set(pac.id, pac);
+        }
+        if (!res?.mas) break;
       }
 
-      setPautasActivas([...(itemsMed || []), ...alertasProcs]);
+      for (const it of itemsLegacy || []) {
+        const pid = it.pacienteId || it.paciente_id;
+        if (pid && !pacsMap.has(pid)) {
+          pacsMap.set(pid, { id: pid, nombre: it.pacienteNombre || "Paciente hospitalizado", hospitalizado: true });
+        }
+      }
+
+      const pacsHosp = Array.from(pacsMap.values()).filter((p) =>
+        Boolean(p.hospitalizado || p.abierta || p.ingreso_activo || p.jaula)
+      );
+
+      const alertasHoja = [];
+      const ordenesRevisadas = new Set();
+
+      await Promise.all(
+        pacsHosp.map(async (pac) => {
+          try {
+            const exp = await repo.expediente(pac.id, signal);
+            const adm = (exp?.atenciones || []).find((a) => a.tipo === "hospitalizacion" && a.abierta);
+            if (!adm) return;
+
+            const pacReal = exp?.p || pac;
+            const [hojaHoy, hojaManana, procs] = await Promise.all([
+              repo.hospital.hoja(adm.id, hoy, signal).catch(() => null),
+              repo.hospital.hoja(adm.id, manana, signal).catch(() => null),
+              repo.modulos ? repo.modulos.listar(adm.id, "proc_hosp", signal).catch(() => []) : Promise.resolve([])
+            ]);
+
+            if (hojaHoy) {
+              for (const o of hojaHoy.ordenes || []) ordenesRevisadas.add(o.id);
+              alertasHoja.push(...extraerAlertasMedicacion(hojaHoy, hojaManana, pacReal, adm, ahoraMs));
+            }
+            if (Array.isArray(procs) && procs.length > 0) {
+              alertasHoja.push(...extraerAlertasProcedimientos(procs, pacReal, adm, ahoraMs));
+            }
+          } catch {}
+        })
+      );
+
+      const extrasLegacy = (itemsLegacy || []).filter((it) => {
+        const oid = it.ordenId || it.orden_id || it.id;
+        return !ordenesRevisadas.has(oid);
+      });
+
+      setPautasActivas([...alertasHoja, ...extrasLegacy]);
     } catch (e) {
       if (e.name !== "AbortError") console.error(e);
     } finally {
@@ -3283,9 +3382,10 @@ export default function App() {
   const pendientes3Horas = pautasActivas
     .map((item) => ({
       ...item,
-      estado: item.esProcedimiento
-        ? evaluarEstadoProcedimiento(item, relojTick)
-        : calcularEstadoDosis(item, relojTick)
+      estado:
+        item.esProcedimiento || item.esAgendaHoja
+          ? evaluarEstadoSlot(item, relojTick)
+          : calcularEstadoDosis(item, relojTick)
     }))
     .filter((item) => item.estado.visibleEnNotificaciones)
     .sort((a, b) => a.estado.diffMin - b.estado.diffMin);
@@ -3422,7 +3522,7 @@ export default function App() {
                 {" — "}
                 {pendientes3Horas
                   .slice(0, 2)
-                  .map((p) => `${p.pacienteNombre || "Paciente"} (${p.producto || p.medicamento || "Tratamiento"} · ${p.estado.etiquetaTiempo})`)
+                  .map((p) => `${p.pacienteNombre || "Paciente"} (${p.producto || p.medicamento || p.medicina || "Tratamiento"} · ${p.estado.etiquetaTiempo})`)
                   .join(" | ")}
               </span>
             </div>
