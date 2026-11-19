@@ -29,6 +29,14 @@ const VIAS_ADMINISTRACION = [
   "vía intranasal"
 ];
 
+const FRECUENCIAS_RECETA = [
+  "24 horas",
+  "12 horas",
+  "8 horas",
+  "4 horas",
+  "2 horas"
+];
+
 const MEDICAMENTOS_RAPIDOS_RECETA = [
   { nombre: "Doxi 200", via: "vía oral" },
   { nombre: "Doxi 100", via: "vía oral" },
@@ -54,7 +62,7 @@ function crearFilaReceta() {
     cantidadTotal: "",
     via: "vía oral",
     dosis: "",
-    frecuencia: "",
+    frecuencia: "12 horas",
     duracion: ""
   };
 }
@@ -150,9 +158,10 @@ export function formatearItemReceta(item) {
     const freq = item.frecuencia.trim();
     partesIndicacion.push(/^cada\b/i.test(freq) ? freq : `cada ${freq}`);
   }
-  if (item.duracion?.trim()) {
-    const dur = item.duracion.trim();
-    partesIndicacion.push(/^(durante|por)\b/i.test(dur) ? dur : `durante ${dur}`);
+  if (item.duracion != null && String(item.duracion).trim() !== "") {
+    const durRaw = String(item.duracion).trim();
+    const durConDias = /\bd[ií]as?\b/i.test(durRaw) ? durRaw : `${durRaw} días`;
+    partesIndicacion.push(/^(durante|por)\b/i.test(durConDias) ? durConDias : `durante ${durConDias}`);
   }
 
   const instruccion =
@@ -492,7 +501,12 @@ export function ModalDocumentosClinicos({
   // Estado: Receta Médica
   const [filasRx, setFilasRx] = useState(() =>
     recetaInicial?.items?.length
-      ? recetaInicial.items.map((it) => ({ ...it, id: it.id || uuid() }))
+      ? recetaInicial.items.map((it) => ({
+          ...it,
+          id: it.id || uuid(),
+          frecuencia: it.frecuencia || "12 horas",
+          duracion: String(it.duracion || "").replace(/\s*d[ií]as?$/i, "").trim()
+        }))
       : [crearFilaReceta(), crearFilaReceta()]
   );
   const [indicacionesGenerales, setIndicacionesGenerales] = useState(
@@ -557,7 +571,15 @@ export function ModalDocumentosClinicos({
     );
   }
 
-  const itemsValidosRx = filasRx.filter((f) => f.medicamento.trim() !== "");
+  const itemsValidosRx = filasRx
+    .filter((f) => f.medicamento.trim() !== "")
+    .map((f) => {
+      const dur = String(f.duracion || "").trim();
+      return {
+        ...f,
+        duracion: dur ? (/\bd[ií]as?\b/i.test(dur) ? dur : `${dur} días`) : ""
+      };
+    });
 
   async function guardarRecetaPdfEnNube() {
     if (guardandoNube) return;
@@ -1105,84 +1127,107 @@ export function ModalDocumentosClinicos({
                       <th style={{ padding: "0.45rem", width: "130px" }}># Cantidad</th>
                       <th style={{ padding: "0.45rem", width: "130px" }}>Vía</th>
                       <th style={{ padding: "0.45rem", width: "120px" }}>Dosis</th>
-                      <th style={{ padding: "0.45rem", width: "115px" }}>Cada (frec.)</th>
-                      <th style={{ padding: "0.45rem", width: "110px" }}>Durante</th>
+                      <th style={{ padding: "0.45rem", width: "120px" }}>Cada (frec.)</th>
+                      <th style={{ padding: "0.45rem", width: "120px" }}>Durante</th>
                       <th style={{ width: "32px" }}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filasRx.map((fila) => (
-                      <tr key={fila.id} style={{ borderBottom: "1px solid #e2e8f0", background: "#fff" }}>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.medicamento}
-                            onChange={(e) => actualizarFilaRx(fila.id, "medicamento", e.target.value)}
-                            placeholder="Ej. Amoxicilina + Ác. Clavulánico 250 mg"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.cantidadTotal}
-                            onChange={(e) => actualizarFilaRx(fila.id, "cantidadTotal", e.target.value)}
-                            placeholder="1 caja (14 tab)"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <select
-                            value={fila.via}
-                            onChange={(e) => actualizarFilaRx(fila.id, "via", e.target.value)}
-                            style={{ width: "100%", padding: "0.38rem 0.35rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          >
-                            {VIAS_ADMINISTRACION.map((v) => (
-                              <option key={v} value={v}>
-                                {v}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.dosis}
-                            onChange={(e) => actualizarFilaRx(fila.id, "dosis", e.target.value)}
-                            placeholder="1 tableta / 2 ml"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.frecuencia}
-                            onChange={(e) => actualizarFilaRx(fila.id, "frecuencia", e.target.value)}
-                            placeholder="12 horas"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ padding: "0.35rem" }}>
-                          <input
-                            type="text"
-                            value={fila.duracion}
-                            onChange={(e) => actualizarFilaRx(fila.id, "duracion", e.target.value)}
-                            placeholder="7 días"
-                            style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                          />
-                        </td>
-                        <td style={{ textAlign: "center" }}>
-                          <button
-                            type="button"
-                            onClick={() => quitarFilaRx(fila.id)}
-                            className="ve-link"
-                            title="Quitar medicamento"
-                          >
-                            <X size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filasRx.map((fila) => {
+                      const opcionesFreq =
+                        fila.frecuencia && !FRECUENCIAS_RECETA.includes(fila.frecuencia)
+                          ? [...FRECUENCIAS_RECETA, fila.frecuencia]
+                          : FRECUENCIAS_RECETA;
+
+                      return (
+                        <tr key={fila.id} style={{ borderBottom: "1px solid #e2e8f0", background: "#fff" }}>
+                          <td style={{ padding: "0.35rem" }}>
+                            <input
+                              type="text"
+                              value={fila.medicamento}
+                              onChange={(e) => actualizarFilaRx(fila.id, "medicamento", e.target.value)}
+                              placeholder="Ej. Amoxicilina + Ác. Clavulánico 250 mg"
+                              style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                            />
+                          </td>
+                          <td style={{ padding: "0.35rem" }}>
+                            <input
+                              type="text"
+                              value={fila.cantidadTotal}
+                              onChange={(e) => actualizarFilaRx(fila.id, "cantidadTotal", e.target.value)}
+                              placeholder="1 caja (14 tab)"
+                              style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                            />
+                          </td>
+                          <td style={{ padding: "0.35rem" }}>
+                            <select
+                              value={fila.via}
+                              onChange={(e) => actualizarFilaRx(fila.id, "via", e.target.value)}
+                              style={{ width: "100%", padding: "0.38rem 0.35rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                            >
+                              {VIAS_ADMINISTRACION.map((v) => (
+                                <option key={v} value={v}>
+                                  {v}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td style={{ padding: "0.35rem" }}>
+                            <input
+                              type="text"
+                              value={fila.dosis}
+                              onChange={(e) => actualizarFilaRx(fila.id, "dosis", e.target.value)}
+                              placeholder="1 tableta / 2 ml"
+                              style={{ width: "100%", padding: "0.38rem 0.45rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                            />
+                          </td>
+                          <td style={{ padding: "0.35rem" }}>
+                            <select
+                              value={fila.frecuencia || "12 horas"}
+                              onChange={(e) => actualizarFilaRx(fila.id, "frecuencia", e.target.value)}
+                              style={{ width: "100%", padding: "0.38rem 0.35rem", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                            >
+                              {opcionesFreq.map((fr) => (
+                                <option key={fr} value={fr}>
+                                  {fr}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td style={{ padding: "0.35rem" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={fila.duracion}
+                                onChange={(e) => actualizarFilaRx(fila.id, "duracion", e.target.value)}
+                                placeholder="7"
+                                style={{
+                                  width: "62px",
+                                  padding: "0.38rem 0.4rem",
+                                  borderRadius: "6px",
+                                  border: "1px solid #cbd5e1"
+                                }}
+                              />
+                              <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                                días
+                              </span>
+                            </div>
+                          </td>
+                          <td style={{ textAlign: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() => quitarFilaRx(fila.id)}
+                              className="ve-link"
+                              title="Quitar medicamento"
+                            >
+                              <X size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
